@@ -1,0 +1,135 @@
+# Default ruleset for coding-agents-kit.
+# Shipped with the project. Overwritten on upgrade.
+# Users should add custom rules in the user/ directory instead of editing this file.
+# Users can extend the lists below using Falco's override mechanism in user/ rules.
+
+# ---------------------------------------------------------------------------
+# Lists
+# ---------------------------------------------------------------------------
+
+- list: sensitive_paths
+  items:
+    - /etc/
+    - /root/
+    - /var/
+    - /boot/
+    - /proc/
+    - /sys/
+
+- list: sensitive_file_names
+  items:
+    - .env
+    - .env.local
+    - .env.production
+    - .netrc
+    - .npmrc
+    - credentials.json
+    - token.json
+
+# ---------------------------------------------------------------------------
+# Macros
+# ---------------------------------------------------------------------------
+
+- macro: is_write_tool
+  condition: tool.name in ("Write", "Edit")
+
+# Extensible macro: each line is an "or" condition.
+# Users can append custom sensitive paths via override:
+#   - macro: is_sensitive_path
+#     condition: or tool.real_file_path contains "/.my_secret_dir/"
+#     override:
+#       condition: append
+- macro: is_sensitive_path
+  condition: >
+    tool.real_file_path pmatch (sensitive_paths)
+    or tool.real_file_path contains "/.ssh/"
+    or tool.real_file_path contains "/.gnupg/"
+    or tool.real_file_path contains "/.aws/"
+    or tool.real_file_path contains "/.azure/"
+    or tool.real_file_path contains "/.config/gcloud/"
+    or tool.real_file_path contains "/.kube/"
+    or tool.real_file_path contains "/.docker/"
+    or basename(tool.file_path) in (sensitive_file_names)
+
+- macro: is_outside_cwd
+  condition: not tool.real_file_path startswith val(agent.real_cwd)
+
+# ---------------------------------------------------------------------------
+# Rules
+# ---------------------------------------------------------------------------
+
+# Output convention for coding-agents-kit rules:
+#
+#   <LLM-friendly message> | <structured fields>
+#
+# The first part (before the pipe) is a human/LLM-readable sentence that
+# explains what happened and why the verdict was applied. The coding agent
+# presents this message to the user. It should be clear, actionable, and
+# self-contained — no jargon or raw field references.
+#
+# The second part (after the pipe) contains structured key=value fields for
+# logging, auditing, and debugging. It always includes correlation=%correlation.id
+# for verdict correlation.
+#
+# The broker passes the full rendered output as the verdict reason string,
+# prefixed by the rule name: "Rule Name: <rendered output>".
+#
+# Example reason seen by the coding agent:
+#   Deny writing to sensitive paths: Writing to /etc/passwd is blocked because
+#   it is a sensitive system path | file=/etc/passwd cwd=/home/user/project ...
+
+- rule: Monitor activity outside working directory
+  desc: >
+    Logs when a coding agent reads, writes, or edits files outside the
+    session's working directory. Informational only — does not block.
+  condition: >
+    tool.name in ("Write", "Edit", "Read")
+    and tool.real_file_path != ""
+    and is_outside_cwd
+  output: >
+    Falco detected access to %tool.real_file_path which is outside the working directory %agent.real_cwd |
+    file=%tool.real_file_path raw_file=%tool.file_path cwd=%agent.real_cwd
+    correlation=%correlation.id agent=%agent.name session=%agent.session_id
+    hook=%agent.hook_event_name tool=%tool.name tool_use_id=%tool.use_id
+    input=%tool.input
+  priority: NOTICE
+  source: coding_agent
+  tags: []
+
+- rule: Ask before writing outside working directory
+  desc: >
+    Requires user confirmation when a coding agent writes or edits a file
+    outside the session's working directory.
+  condition: >
+    is_write_tool
+    and tool.real_file_path != ""
+    and is_outside_cwd
+    and not is_sensitive_path
+  output: >
+    Falco requires confirmation to write to %tool.real_file_path because it is outside the working directory %agent.real_cwd |
+    file=%tool.real_file_path raw_file=%tool.file_path cwd=%agent.real_cwd
+    correlation=%correlation.id agent=%agent.name session=%agent.session_id
+    hook=%agent.hook_event_name tool=%tool.name tool_use_id=%tool.use_id
+    input=%tool.input
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask]
+
+- rule: Deny writing to sensitive paths
+  desc: >
+    Blocks writes to sensitive filesystem locations such as /etc/, ~/.ssh/,
+    cloud credential directories, and environment variable files.
+    Extend the sensitive_paths and sensitive_file_names lists in user/ rules
+    to customize.
+  condition: >
+    is_write_tool
+    and is_sensitive_path
+  output: >
+    Falco blocked writing to %tool.real_file_path because it is a sensitive path |
+    file=%tool.real_file_path raw_file=%tool.file_path cwd=%agent.real_cwd
+    correlation=%correlation.id agent=%agent.name session=%agent.session_id
+    hook=%agent.hook_event_name tool=%tool.name tool_use_id=%tool.use_id
+    input=%tool.input
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny]

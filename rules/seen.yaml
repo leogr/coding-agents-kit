@@ -1,0 +1,11 @@
+- rule: Coding Agent Event Seen
+  desc: >
+    Catch-all rule that fires for every coding agent event.
+    Signals to the plugin broker that rule evaluation is complete.
+    Must be loaded after all other rule files.
+  condition: correlation.id > 0
+  output: >
+    Event seen | correlation=%correlation.id
+  priority: DEBUG
+  source: coding_agent
+  tags: [coding_agent_seen]
