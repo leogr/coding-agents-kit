@@ -106,6 +106,22 @@
   source: coding_agent
   tags: [coding_agent_ask]
 
+- rule: Deny reading sensitive paths
+  desc: >
+    Blocks reads from sensitive filesystem locations such as ~/.ssh/,
+    cloud credential directories, and environment variable files.
+    Prevents exfiltration of secrets via the Read tool.
+    Extend the sensitive_paths and sensitive_file_names lists in user/ rules
+    to customize.
+  condition: >
+    tool.name = "Read"
+    and is_sensitive_path
+  output: >
+    Falco blocked reading %tool.real_file_path because it is a sensitive path
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny]
+
 - rule: Deny writing to sensitive paths
   desc: >
     Blocks writes to sensitive filesystem locations such as /etc/, ~/.ssh/,
