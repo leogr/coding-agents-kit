@@ -6,20 +6,25 @@
 ![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS-blue?style=flat-square)
 ![Architectures](https://img.shields.io/badge/arch-x86__64%20%7C%20aarch64-blueviolet?style=flat-square)
 
-> **A Falco-based kit to instruct coding agents to behave as you expect.**
-
 > **Experimental Preview** — This project is under active development and released as an early preview. Interfaces and behavior may change between releases. We welcome your [feedback](#feedback) to help shape its future.
 
-**coding-agents-kit** is a way to run [Falco](https://falco.org) locally on your development machine and make sure your AI coding agents follow the security rules you define. It intercepts every tool call — shell commands, file writes, web requests — *before* execution, evaluates it against [Falco rules](https://falco.org/docs/rules/), and enforces allow, deny, or ask-for-confirmation verdicts in real time.
-
-Rule-based monitoring and enforcement for AI coding agents, powered by [Falco](https://falco.org) technology. No elevated privileges required.
-
-## How It Works
+## Falco meets AI Coding Agents
 
 [![asciicast](demo.gif)](https://asciinema.org/a/lXqokxXVO4Q3IH3W)
 
+**coding-agents-kit** brings [Falco](https://falco.org) to the world of AI coding agents. It is designed for developers who use coding agents daily and want visibility and control over what those agents do on their machines.
 
-When your coding agent tries to use a tool (run a command, write a file, call an API), **coding-agents-kit** intercepts the call *before* it executes, evaluates it against your security rules, and decides what happens next:
+True to Falco's tradition, the primary goal is **detection**. The kit provides a **monitor mode** that lets you observe every tool call your coding agent makes — shell commands, file writes, reads, API calls — in real time, evaluated against [Falco rules](https://falco.org/docs/rules/) you define. This gives you a clear picture of what the agent is actually doing during a session.
+
+Unlike classic Falco, this project operates entirely in user space — no kernel modules, no root, no containers. This makes it easy to run on your development machine but comes with [known limitations](#known-limitations): Falco evaluates tool calls as declared by the agent, not the system calls those commands produce.
+
+That said, detecting unwanted behavior is still valuable — even at the tool-call level, it helps you catch the unexpected. The kit also provides a lightweight **enforcement mode** that relies on the coding agent's own hook API to block or prompt for confirmation. Think of it as a way to let Falco instruct the agent to behave as expected and avoid potentially harmful behaviors. This is not a substitute for sandboxing or system hardening — it complements those techniques by adding a policy layer at the agent level.
+
+Ultimately, **coding-agents-kit** is a new way to let Falco and coding agents collaborate, and a foundation for exploring new approaches to protecting your systems against AI-driven threats.
+
+## How It Works
+
+When your coding agent tries to use a tool, **coding-agents-kit** intercepts the call *before* it executes, evaluates it against your security rules, and decides what happens next:
 
 | Verdict | What Happens |
 |---------|-------------|
@@ -28,8 +33,6 @@ When your coding agent tries to use a tool (run a command, write a file, call an
 | **Ask** | You are prompted to approve or reject the call |
 
 Security policies are written as standard [Falco rules](https://falco.org/docs/rules/) in YAML. You get a set of sensible defaults out of the box, and you can add your own rules for your specific needs.
-
-Everything runs in user space — no root, no kernel modules, no containers.
 
 ## Quick Start
 
@@ -177,16 +180,6 @@ The skill guides Claude through writing the rule, placing it in the right direct
 
 We are actively working on expanding agent and platform support. [Codex](https://openai.com/index/codex/) integration and Windows support are next on the roadmap.
 
-## Features
-
-- **Policy as code** — security rules written in the [Falco rule language](https://falco.org/docs/rules/) (YAML)
-- **Three verdicts** — deny (block), ask (require confirmation), allow
-- **Verdict escalation** — deny > ask > allow when multiple rules match
-- **Monitor mode** — evaluate rules without enforcing, useful for tuning
-- **Fail-closed** — tool calls are blocked when the service is unavailable
-- **No elevated privileges** — runs entirely in user space
-- **Extensible** — add custom rules without modifying defaults
-
 ## Building from Source
 
 <details>
@@ -246,14 +239,14 @@ make falco-macos                                          # Falco binary (macOS 
 ## Architecture
 
 ```
-┌──────────────┐     ┌──────────────┐     ┌────────────────────────────┐
+┌──────────────┐      ┌──────────────┐      ┌────────────────────────────┐
 │ Coding Agent │────▶│ Interceptor  │────▶│     Falco (nodriver)       │
-│              │     │   (hook)     │     │  ┌───────────────────────┐ │
+│              │      │   (hook)     │      │  ┌───────────────────────┐ │
 │              │◀────│              │◀────│  │  Plugin (src + extract│ │
-│              │     │              │     │  │  + embedded broker)   │ │
-└──────────────┘     └──────────────┘     │  └───────────────────────┘ │
-                                          │  Rule Engine + Rules       │
-                                          └────────────────────────────┘
+│              │      │              │      │  │  + embedded broker)   │ │
+└──────────────┘      └──────────────┘      │  └───────────────────────┘ │
+                                            │  Rule Engine + Rules       │
+                                            └────────────────────────────┘
 ```
 
 1. The coding agent's hook fires before each tool call
@@ -273,10 +266,6 @@ For design decisions, component specs, and full architectural documentation, see
 This means that if a coding agent embeds harmful logic in a source file, compiles it, and then runs the resulting binary, Falco can inspect the compile and run commands but cannot analyze what the compiled program actually does at runtime. The rules see `gcc main.c -o main` and `./main`, not the system calls that `./main` makes.
 
 This is inherent to the hook-based approach: Falco evaluates tool calls as declared by the agent, not the actions those tool calls perform at the OS level. For deeper visibility — detecting what processes actually do at the syscall level — Falco's kernel instrumentation (eBPF/kmod) is the right tool (at least for Linux).
-
-### Status
-
-This is an early experimental preview. Configuration formats, rule fields, and the plugin wire protocol may change between releases. We recommend starting with **monitor mode** to understand the impact of rules before switching to enforcement.
 
 ## Feedback
 
