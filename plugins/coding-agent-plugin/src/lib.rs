@@ -1,0 +1,101 @@
+use std::ffi::CStr;
+use std::sync::Arc;
+
+use anyhow::Error;
+use crossbeam_channel::{bounded, Receiver, Sender};
+use falco_plugin::base::{Json, Plugin};
+use falco_plugin::tables::TablesInput;
+use falco_plugin::{extract_plugin, plugin, source_plugin};
+
+mod broker;
+mod config;
+mod event;
+mod extract;
+mod http_server;
+mod socket_server;
+mod source;
+mod verdict;
+
+use broker::Broker;
+use config::CodingAgentConfig;
+use event::EventData;
+
+/// Default event queue capacity.
+const DEFAULT_QUEUE_CAPACITY: usize = 1024;
+
+/// The coding-agents-kit Falco plugin.
+///
+/// Capabilities: sourcing + extraction.
+/// - Sourcing: receives events from interceptors via Unix socket,
+///   queues them, and delivers to Falco via next_batch.
+/// - Extraction: exposes agent.* and tool.* fields for Falco rules.
+pub struct CodingAgentPlugin {
+    #[allow(dead_code)]
+    config: CodingAgentConfig,
+    /// Channel receiver for events from interceptor connections.
+    pub(crate) event_rx: Receiver<EventData>,
+    /// Broker: tracks pending requests and resolves verdicts.
+    pub(crate) broker: Arc<Broker>,
+    /// Handle to the socket server background thread.
+    #[allow(dead_code)]
+    socket_thread: Option<std::thread::JoinHandle<()>>,
+    /// Handle to the HTTP alert receiver background thread.
+    #[allow(dead_code)]
+    http_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Plugin for CodingAgentPlugin {
+    const NAME: &'static CStr = c"coding_agent";
+    const PLUGIN_VERSION: &'static CStr = c"0.1.0";
+    const DESCRIPTION: &'static CStr =
+        c"coding-agents-kit - Runtime Security for AI Coding Agents with Falco";
+    const CONTACT: &'static CStr = c"https://github.com/falcosecurity/coding-agents-kit";
+
+    type ConfigType = Json<CodingAgentConfig>;
+
+    fn new(
+        _input: Option<&TablesInput>,
+        config: Self::ConfigType,
+    ) -> Result<Self, Error> {
+        let Json(config) = config;
+
+        log::info!(
+            "coding_agent plugin initialized (mode={}, socket_path={}, http_port={})",
+            config.mode,
+            config.socket_path,
+            config.http_port,
+        );
+
+        let (event_tx, event_rx): (Sender<EventData>, Receiver<EventData>) =
+            bounded(DEFAULT_QUEUE_CAPACITY);
+        let broker = Arc::new(Broker::new());
+        broker.set_monitor_mode(config.mode == "monitor");
+
+        // Spawn Unix socket server thread.
+        let socket_thread = Some(socket_server::start(
+            config.socket_path.clone(),
+            event_tx,
+            Arc::clone(&broker),
+        ));
+
+        // Spawn HTTP alert receiver thread.
+        let http_thread = Some(http_server::start(&config, Arc::clone(&broker)));
+
+        Ok(CodingAgentPlugin {
+            config,
+            event_rx,
+            broker,
+            socket_thread,
+            http_thread,
+        })
+    }
+
+    // Note: set_config() is NOT called by Falco 0.43. The watch_config_files
+    // mechanism performs a full restart (destroy + init), so config changes are
+    // handled by new() being called again with the updated config.
+}
+
+// Register the plugin with Falco.
+plugin!(CodingAgentPlugin);
+source_plugin!(CodingAgentPlugin);
+extract_plugin!(CodingAgentPlugin);

@@ -1,0 +1,25 @@
+[package]
+name = "coding-agent-plugin"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+name = "coding_agent_plugin"
+crate-type = ["cdylib"]
+
+[dependencies]
+falco_plugin = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+falco_event = "0.5"
+crossbeam-channel = "0.5"
+dashmap = "6"
+tiny_http = "0.12"
+anyhow = "1"
+log = "0.4"
+
+[profile.release]
+opt-level = 2
+lto = true
+strip = true
