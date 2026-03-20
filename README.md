@@ -136,6 +136,36 @@ Example — block piping content to shell interpreters:
 
 Rules are written in the standard [Falco rule language](https://falco.org/docs/rules/) (YAML). See [`rules/README.md`](rules/README.md) for all available fields and examples.
 
+### Rule Authoring Skill for Claude Code
+
+A Claude Code [skill](https://github.com/anthropics/skills) is included to help you write custom rules interactively.
+
+Register this repository as a Claude Code Plugin marketplace:
+
+```
+/plugin marketplace add leogr/coding-agents-kit
+```
+
+Then install the skill directly:
+
+```
+/plugin install coding-agents-falco-rules@leogr/coding-agents-kit-skills
+```
+
+Or browse and install interactively:
+
+1. Select `Browse and install plugins`
+2. Select `leogr/coding-agents-kit-skills`
+3. Select `coding-agents-falco-rules`
+4. Select `Install now`
+
+Once installed, ask Claude Code things like:
+- "Block the agent from running git push"
+- "Deny any read outside the working directory"
+- "Create a rule that requires confirmation before editing Dockerfiles"
+
+The skill guides Claude through writing the rule, placing it in the right directory, and validating it with Falco.
+
 ## Supported Agents & Platforms
 
 | Agent | Platform | Status |
