@@ -1,0 +1,310 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright (C) 2026 The Falco Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Claude Code interceptor — thin bridge between Claude Code's PreToolUse hook
+//! and the coding-agents-kit plugin broker.
+//!
+//! The interceptor does NOT interpret tool call content. It reads the hook JSON
+//! from stdin, wraps it in a wire-protocol envelope, sends it to the broker,
+//! and maps the broker's verdict back to Claude Code's hook response format.
+//! All field extraction and policy evaluation happens in the plugin broker.
+
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::io::{self, BufRead, Read, Write};
+use std::net::Shutdown;
+use std::os::unix::net::UnixStream;
+use std::process;
+use std::time::{Duration, Instant};
+
+// ---------------------------------------------------------------------------
+// Data types
+// ---------------------------------------------------------------------------
+
+/// Minimal parse of stdin — only extract tool_use_id for correlation.
+/// All other fields are passed through as raw JSON.
+#[derive(Deserialize)]
+struct HookInputMinimal {
+    #[serde(default)]
+    tool_use_id: String,
+}
+
+/// Wire protocol request (interceptor → broker).
+#[derive(Serialize)]
+struct Request<'a> {
+    version: u32,
+    id: &'a str,
+    agent_name: &'static str,
+    event: &'a serde_json::value::RawValue,
+}
+
+/// Wire protocol response (broker → interceptor).
+#[derive(Deserialize)]
+struct Response {
+    id: String,
+    decision: String,
+    #[serde(default)]
+    reason: String,
+}
+
+/// Claude Code hook output (stdout).
+#[derive(Serialize)]
+struct HookOutput<'a> {
+    #[serde(rename = "hookSpecificOutput")]
+    hook_specific_output: HookSpecificOutput<'a>,
+}
+
+#[derive(Serialize)]
+struct HookSpecificOutput<'a> {
+    #[serde(rename = "hookEventName")]
+    hook_event_name: &'static str,
+    #[serde(rename = "permissionDecision")]
+    permission_decision: &'a str,
+    #[serde(rename = "permissionDecisionReason")]
+    permission_decision_reason: &'a str,
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const DEFAULT_TIMEOUT_MS: u64 = 5000;
+const TIMEOUT_MIN_MS: u64 = 100;
+const TIMEOUT_MAX_MS: u64 = 30000;
+const SOCKET_SUFFIX: &str = "/.coding-agents-kit/run/broker.sock";
+const INPUT_MAX: usize = 64 * 1024;
+const RESPONSE_MAX: u64 = 64 * 1024;
+
+// ---------------------------------------------------------------------------
+// Verdict output
+// ---------------------------------------------------------------------------
+
+/// Write a verdict JSON to stdout. If serialization or write fails, falls back
+/// to a hardcoded deny literal to avoid empty stdout (which Claude Code treats
+/// as "allow").
+fn write_verdict(decision: &str, reason: &str) {
+    let output = HookOutput {
+        hook_specific_output: HookSpecificOutput {
+            hook_event_name: "PreToolUse",
+            permission_decision: decision,
+            permission_decision_reason: reason,
+        },
+    };
+    match serde_json::to_string(&output) {
+        Ok(json) => {
+            if writeln!(io::stdout(), "{json}").is_err() {
+                process::exit(2);
+            }
+        }
+        Err(_) => {
+            if io::stdout()
+                .write_all(
+                    b"{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\
+                      \"permissionDecision\":\"deny\",\
+                      \"permissionDecisionReason\":\"internal serialization error\"}}\n",
+                )
+                .is_err()
+            {
+                process::exit(2);
+            }
+        }
+    }
+}
+
+fn verdict_deny(reason: &str) -> ! {
+    write_verdict("deny", reason);
+    process::exit(0);
+}
+
+/// Broker communication failure — always deny (fail-closed).
+fn verdict_on_error(reason: &str) -> ! {
+    verdict_deny(reason);
+}
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+fn get_socket_path() -> String {
+    if let Ok(v) = env::var("CODING_AGENTS_KIT_SOCKET") {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    let home = env::var("HOME").unwrap_or_default();
+    if home.is_empty() {
+        return String::new();
+    }
+    format!("{home}{SOCKET_SUFFIX}")
+}
+
+fn get_timeout() -> Duration {
+    let ms = env::var("CODING_AGENTS_KIT_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|v| v.clamp(TIMEOUT_MIN_MS, TIMEOUT_MAX_MS))
+        .unwrap_or(DEFAULT_TIMEOUT_MS);
+    Duration::from_millis(ms)
+}
+
+// ---------------------------------------------------------------------------
+// Socket communication
+// ---------------------------------------------------------------------------
+
+/// Compute remaining time from a deadline. Returns Err if expired.
+fn remaining_timeout(start: Instant, timeout: Duration) -> Result<Duration, String> {
+    timeout
+        .checked_sub(start.elapsed())
+        .filter(|d| !d.is_zero())
+        .ok_or_else(|| "broker response timeout".to_string())
+}
+
+/// Connect to broker, send request, receive response.
+fn communicate(socket_path: &str, request: &[u8], timeout: Duration) -> Result<Response, String> {
+    let start = Instant::now();
+
+    let stream =
+        UnixStream::connect(socket_path).map_err(|e| format!("broker unavailable: {e}"))?;
+
+    // Send request.
+    let remaining = remaining_timeout(start, timeout)?;
+    stream
+        .set_write_timeout(Some(remaining))
+        .map_err(|e| format!("set timeout: {e}"))?;
+    (&stream)
+        .write_all(request)
+        .map_err(|e| format!("broker write failed: {e}"))?;
+
+    // Signal we're done writing so the broker knows the full request arrived.
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|e| format!("broker shutdown failed: {e}"))?;
+
+    // Receive response with cumulative timeout and size limit.
+    let remaining = remaining_timeout(start, timeout)?;
+    stream
+        .set_read_timeout(Some(remaining))
+        .map_err(|e| format!("set timeout: {e}"))?;
+
+    let mut line = String::new();
+    io::BufReader::new((&stream).take(RESPONSE_MAX))
+        .read_line(&mut line)
+        .map_err(|e| format!("broker response timeout: {e}"))?;
+
+    if line.is_empty() {
+        return Err("broker closed connection".into());
+    }
+
+    serde_json::from_str::<Response>(&line).map_err(|e| format!("malformed broker response: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+enum Error {
+    /// Critical input error — exit code 2.
+    InputError(String),
+    /// Broker/infrastructure error — apply fail-open/closed policy.
+    BrokerError(String),
+}
+
+// ---------------------------------------------------------------------------
+// Core logic
+// ---------------------------------------------------------------------------
+
+fn run() -> Result<(), Error> {
+    // Step 1: Read stdin (up to INPUT_MAX + 1 to detect overflow).
+    let mut input = Vec::with_capacity(INPUT_MAX);
+    let bytes_read = io::stdin()
+        .take((INPUT_MAX + 1) as u64)
+        .read_to_end(&mut input)
+        .map_err(|e| Error::InputError(format!("failed to read stdin: {e}")))?;
+
+    if bytes_read == 0 {
+        return Err(Error::InputError("empty stdin".into()));
+    }
+
+    if bytes_read > INPUT_MAX {
+        return Err(Error::InputError("input too large (max 64KB)".into()));
+    }
+
+    // Step 2: Extract correlation ID (minimal parse — only tool_use_id).
+    let minimal: HookInputMinimal = serde_json::from_slice(&input)
+        .map_err(|e| Error::InputError(format!("malformed input JSON: {e}")))?;
+
+    let correlation_id = if minimal.tool_use_id.is_empty() {
+        "unknown"
+    } else {
+        &minimal.tool_use_id
+    };
+
+    // Step 3: Build wire-protocol request with raw event passthrough.
+    let raw_event = serde_json::value::RawValue::from_string(
+        String::from_utf8(input).map_err(|e| Error::InputError(format!("invalid UTF-8: {e}")))?,
+    )
+    .map_err(|e| Error::InputError(format!("malformed input JSON: {e}")))?;
+
+    let request = Request {
+        version: 1,
+        id: correlation_id,
+        agent_name: "claude_code",
+        event: &raw_event,
+    };
+
+    let mut request_bytes = serde_json::to_vec(&request)
+        .map_err(|e| Error::BrokerError(format!("failed to serialize request: {e}")))?;
+    request_bytes.push(b'\n');
+
+    // Step 4: Configuration.
+    let socket_path = get_socket_path();
+    if socket_path.is_empty() {
+        return Err(Error::BrokerError(
+            "HOME not set, cannot locate broker socket".into(),
+        ));
+    }
+    let timeout = get_timeout();
+
+    // Step 5: Communicate with broker.
+    let response =
+        communicate(&socket_path, &request_bytes, timeout).map_err(Error::BrokerError)?;
+
+    // Step 6: Validate response.
+    if response.id != correlation_id {
+        return Err(Error::BrokerError("broker response ID mismatch".into()));
+    }
+
+    if !matches!(response.decision.as_str(), "allow" | "deny" | "ask") {
+        return Err(Error::BrokerError("invalid broker decision".into()));
+    }
+
+    // Step 7: Write verdict.
+    write_verdict(&response.decision, &response.reason);
+    Ok(())
+}
+
+fn main() {
+    match run() {
+        Ok(()) => {}
+        Err(Error::InputError(msg)) => {
+            eprintln!("claude-interceptor: {msg}");
+            process::exit(2);
+        }
+        Err(Error::BrokerError(reason)) => {
+            verdict_on_error(&reason);
+        }
+    }
+}
