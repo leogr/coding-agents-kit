@@ -70,15 +70,6 @@ impl Broker {
         );
     }
 
-    /// Send a deny response directly on a stream (without registering in pending).
-    /// Used when the event cannot be processed (e.g., queue full).
-    pub fn send_deny(stream: UnixStream, correlation_id: &str, reason: &str) {
-        let response = Verdict::Deny(reason.to_string()).to_response_json(correlation_id);
-        let mut stream = stream;
-        let _ = write!(stream, "{}\n", response);
-        let _ = stream.shutdown(Shutdown::Both);
-    }
-
     /// Apply a deny verdict. Deny wins immediately — resolve and respond.
     pub fn apply_deny(&self, correlation_id: u64, reason: String) {
         if self.is_monitor() {

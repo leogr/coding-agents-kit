@@ -36,6 +36,7 @@ impl ToBytes for CodingAgentPayload<'_> {
 /// Wire protocol request from the interceptor.
 #[derive(Deserialize)]
 pub struct InterceptorRequest {
+    #[allow(dead_code)]
     pub version: u32,
     pub id: String,
     pub agent_name: String,

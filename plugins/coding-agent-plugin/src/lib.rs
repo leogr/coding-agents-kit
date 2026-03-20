@@ -35,6 +35,8 @@ pub struct CodingAgentPlugin {
     /// Channel receiver for events from interceptor connections.
     pub(crate) event_rx: Receiver<EventData>,
     /// Broker: tracks pending requests and resolves verdicts.
+    /// Held here to keep the Arc alive for the socket/HTTP server threads.
+    #[allow(dead_code)]
     pub(crate) broker: Arc<Broker>,
     /// Handle to the socket server background thread.
     #[allow(dead_code)]
