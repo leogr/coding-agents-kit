@@ -62,6 +62,14 @@ cat > "$RULES_DIR/deny.yaml" << 'YAML'
   priority: WARNING
   source: coding_agent
   tags: [coding_agent_ask]
+
+- rule: Deny reading sensitive paths
+  desc: Block reads from sensitive paths
+  condition: tool.name = "Read" and (tool.real_file_path startswith "/etc/" or tool.real_file_path startswith "/private/etc/" or tool.real_file_path contains "/.ssh/")
+  output: "Falco blocked reading %tool.real_file_path because it is a sensitive path"
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny]
 YAML
 
 cat > "$RULES_DIR/seen.yaml" << 'YAML'
@@ -83,7 +91,11 @@ trap cleanup EXIT
 
 start_falco() {
     rm -f "$SOCK"
-    falco -c "$ROOT_DIR/configs/falco.yaml" \
+    # Use inline config overrides so the test does not depend on an installed
+    # config at ~/.coding-agents-kit/. This makes the test self-contained.
+    falco \
+        -o "engine.kind=nodriver" \
+        -o "config_files=" \
         -o "plugins[0].name=coding_agent" \
         -o "plugins[0].library_path=$PLUGIN_LIB" \
         -o "plugins[0].init_config={\"socket_path\":\"$SOCK\",\"http_port\":$HTTP_PORT}" \
@@ -91,9 +103,18 @@ start_falco() {
         -o "rules_files[0]=$RULES_DIR/deny.yaml" \
         -o "rules_files[1]=$RULES_DIR/seen.yaml" \
         -o "json_output=true" \
+        -o "json_include_message_property=true" \
+        -o "json_include_output_property=false" \
+        -o "json_include_output_fields_property=true" \
+        -o "json_include_tags_property=true" \
         -o "rule_matching=all" \
+        -o "priority=debug" \
+        -o "stdout_output.enabled=true" \
+        -o "syslog_output.enabled=false" \
         -o "http_output.enabled=true" \
         -o "http_output.url=http://127.0.0.1:$HTTP_PORT" \
+        -o "append_output[0].match.source=coding_agent" \
+        -o "append_output[0].extra_output=| For AI Agents: inform the user that this action was flagged by a Falco security rule | correlation=%correlation.id" \
         --disable-source syscall \
         > "$E2E_DIR/falco.log" 2>&1 &
     FALCO_PID=$!
@@ -215,6 +236,30 @@ assert_decision "$out" "allow" "grep allowed"
 echo "=== Allow: MCP tool ==="
 out=$(run_hook "$(make_input 'mcp__github__get_issue' '{"number":42}' /tmp toolu_allow_mcp)")
 assert_decision "$out" "allow" "MCP tool allowed"
+
+echo "=== Deny: read sensitive path ==="
+out=$(run_hook "$(make_input Read '{"file_path":"/etc/shadow"}' /tmp toolu_deny_read_etc)")
+assert_decision "$out" "deny" "read /etc/shadow denied"
+assert_reason_contains "$out" "Deny reading sensitive paths" "deny reason mentions read rule name"
+
+echo "=== Deny: read ssh key ==="
+out=$(run_hook "$(make_input Read '{"file_path":"/home/user/.ssh/id_rsa"}' /tmp toolu_deny_read_ssh)")
+assert_decision "$out" "deny" "read .ssh/id_rsa denied"
+
+echo "=== Allow: read safe file ==="
+out=$(run_hook "$(make_input Read '{"file_path":"/tmp/safe.txt"}' /tmp toolu_allow_read_safe)")
+assert_decision "$out" "allow" "read safe file allowed"
+
+echo "=== Deny: append_output text in reason ==="
+# Verify the append_output "For AI Agents" instruction appears in deny reasons.
+out=$(run_hook "$(make_input Bash '{"command":"rm -rf /tmp/nuke"}' /tmp toolu_deny_append)")
+assert_reason_contains "$out" "For AI Agents" "append_output instruction in deny reason"
+assert_reason_contains "$out" "correlation=" "correlation.id in deny reason"
+
+echo "=== Deny: write to /etc does not get ask (escalation) ==="
+# Write to /etc/ is both outside cwd and a sensitive path — deny must win over ask.
+out=$(run_hook "$(make_input Write '{"file_path":"/etc/hosts","content":"x"}' /tmp/myproject toolu_escalation)")
+assert_decision "$out" "deny" "deny wins over ask (verdict escalation)"
 
 # --- Results ---
 echo ""
