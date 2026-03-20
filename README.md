@@ -8,26 +8,16 @@
 
 > **A Falco-based kit to instruct coding agents to behave as you expect.**
 
+> **Experimental Preview** — This project is under active development and released as an early preview. Interfaces and behavior may change between releases. We welcome your [feedback](#feedback) to help shape its future.
+
 **coding-agents-kit** is a way to run [Falco](https://falco.org) locally on your development machine and make sure your AI coding agents follow the security rules you define. It intercepts every tool call — shell commands, file writes, web requests — *before* execution, evaluates it against [Falco rules](https://falco.org/docs/rules/), and enforces allow, deny, or ask-for-confirmation verdicts in real time.
 
 Rule-based monitoring and enforcement for AI coding agents, powered by [Falco](https://falco.org) technology. No elevated privileges required.
 
-> [!WARNING]
-> **Experimental Preview** — This project is under active development and released as an early preview. Interfaces and behavior may change between releases. We welcome your [feedback](#feedback) to help shape its future.
-
-## Demo
-
-<!-- TODO: Replace with asciinema player embed, e.g.:
-[![asciicast](https://asciinema.org/a/XXXXXX.svg)](https://asciinema.org/a/XXXXXX)
--->
-_Demo recording coming soon._
-
-<!-- TODO: Replace with a screenshot or diagram, e.g.:
-![coding-agents-kit in action](docs/images/screenshot.png)
--->
-_Screenshot coming soon._
-
 ## How It Works
+
+[![asciicast](demo.gif)](https://asciinema.org/a/lXqokxXVO4Q3IH3W)
+
 
 When your coding agent tries to use a tool (run a command, write a file, call an API), **coding-agents-kit** intercepts the call *before* it executes, evaluates it against your security rules, and decides what happens next:
 
