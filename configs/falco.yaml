@@ -14,6 +14,14 @@ engine:
 
 # JSON output for machine-readable alerts (required by the plugin's HTTP receiver).
 json_output: true
+# Include the "message" field (rule output without timestamp prefix) — used as
+# the verdict reason sent to the coding agent. Clean, LLM-friendly text.
+json_include_message_property: true
+# Exclude the "output" field (includes timestamp prefix, redundant with "message").
+json_include_output_property: false
+# Include output_fields (structured field values) and tags (verdict classification).
+json_include_output_fields_property: true
+json_include_tags_property: true
 
 # All matching rules must fire per event.
 # Required so that deny/ask rules AND the catch-all seen rule both trigger.

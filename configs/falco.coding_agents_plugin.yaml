@@ -31,3 +31,11 @@ priority: debug
 http_output:
   enabled: true
   url: http://127.0.0.1:2802
+
+# Append a standardized instruction to all coding_agent alerts.
+# This ensures the LLM always attributes the verdict to Falco in user-facing messages.
+append_output:
+  # - suggested_output: true # Unnecessary since we have it in extra_output.
+  - match:
+      source: coding_agent
+    extra_output: "| For AI Agents: inform the user that this action was flagged by a Falco security rule | correlation=%correlation.id"

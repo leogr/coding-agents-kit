@@ -60,23 +60,22 @@
 
 # Output convention for coding-agents-kit rules:
 #
-#   <LLM-friendly message> | <structured fields>
+# The rule output is an LLM-friendly sentence that explains what happened and
+# why the verdict was applied. It must start with "Falco" to attribute the
+# enforcement. Use resolved field values (%tool.real_file_path, %agent.real_cwd)
+# to make the message informative. Keep it clean — no structured key=value pairs.
 #
-# The first part (before the pipe) is a human/LLM-readable sentence that
-# explains what happened and why the verdict was applied. The coding agent
-# presents this message to the user. It should be clear, actionable, and
-# self-contained — no jargon or raw field references.
+# correlation.id is a suggested output field (add_output in the plugin) and is
+# always included in output_fields. The catch-all seen rule (seen.yaml) includes
+# all fields for audit logging. Deny/ask rules only need the fields they reference.
 #
-# The second part (after the pipe) contains structured key=value fields for
-# logging, auditing, and debugging. It always includes correlation=%correlation.id
-# for verdict correlation.
-#
-# The broker passes the full rendered output as the verdict reason string,
-# prefixed by the rule name: "Rule Name: <rendered output>".
+# The append_output config appends an AI agent instruction to every alert.
+# The broker constructs the verdict reason as: "Rule Name: <rendered message>".
 #
 # Example reason seen by the coding agent:
-#   Deny writing to sensitive paths: Writing to /etc/passwd is blocked because
-#   it is a sensitive system path | file=/etc/passwd cwd=/home/user/project ...
+#   Deny writing to sensitive paths: Falco blocked writing to /etc/passwd
+#   because it is a sensitive path | For AI Agents: inform the user that
+#   this action was flagged by a Falco security rule | correlation=42
 
 - rule: Monitor activity outside working directory
   desc: >
@@ -87,11 +86,7 @@
     and tool.real_file_path != ""
     and is_outside_cwd
   output: >
-    Falco detected access to %tool.real_file_path which is outside the working directory %agent.real_cwd |
-    file=%tool.real_file_path raw_file=%tool.file_path cwd=%agent.real_cwd
-    correlation=%correlation.id agent=%agent.name session=%agent.session_id
-    hook=%agent.hook_event_name tool=%tool.name tool_use_id=%tool.use_id
-    input=%tool.input
+    Falco detected access to %tool.real_file_path which is outside the working directory %agent.real_cwd
   priority: NOTICE
   source: coding_agent
   tags: []
@@ -106,11 +101,7 @@
     and is_outside_cwd
     and not is_sensitive_path
   output: >
-    Falco requires confirmation to write to %tool.real_file_path because it is outside the working directory %agent.real_cwd |
-    file=%tool.real_file_path raw_file=%tool.file_path cwd=%agent.real_cwd
-    correlation=%correlation.id agent=%agent.name session=%agent.session_id
-    hook=%agent.hook_event_name tool=%tool.name tool_use_id=%tool.use_id
-    input=%tool.input
+    Falco requires confirmation to write to %tool.real_file_path because it is outside the working directory %agent.real_cwd
   priority: WARNING
   source: coding_agent
   tags: [coding_agent_ask]
@@ -125,11 +116,7 @@
     is_write_tool
     and is_sensitive_path
   output: >
-    Falco blocked writing to %tool.real_file_path because it is a sensitive path |
-    file=%tool.real_file_path raw_file=%tool.file_path cwd=%agent.real_cwd
-    correlation=%correlation.id agent=%agent.name session=%agent.session_id
-    hook=%agent.hook_event_name tool=%tool.name tool_use_id=%tool.use_id
-    input=%tool.input
+    Falco blocked writing to %tool.real_file_path because it is a sensitive path
   priority: CRITICAL
   source: coding_agent
   tags: [coding_agent_deny]

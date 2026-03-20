@@ -65,26 +65,21 @@ Rules use the standard [Falco rule language](https://falco.org/docs/rules/). Ava
 
 All rules must:
 - Set `source: coding_agent`
-- Include `correlation=%correlation.id` in the structured fields (required for verdict correlation)
 - Use the appropriate verdict tag (`coding_agent_deny` or `coding_agent_ask`)
 - Follow the output convention described below
 
 ### Output Convention
 
-The rule `output:` field is the primary message the coding agent receives as the verdict reason. It uses a two-part format:
+The rule `output:` field is an LLM-friendly sentence explaining what happened and why. It must start with "Falco" (e.g., "Falco blocked...", "Falco requires confirmation..."). Use resolved field values (e.g., `%tool.real_file_path`) so the message is informative. Avoid jargon or raw field names.
+
+**Do not include structured key=value fields in the output.** The `append_output` config in `falco.coding_agents_plugin.yaml` automatically appends an AI agent instruction to every alert. The `correlation.id` field is a suggested output field (declared with `add_output()` in the plugin) and is always included in `output_fields`.
+
+The catch-all seen rule (`seen.yaml`) includes all available fields in its output, providing a complete audit record for every event. Other rules only need the fields they reference in their message. Events can be correlated using `correlation.id`.
+
+The broker passes the rendered message as the verdict reason, prefixed by the rule name: `"Rule Name: <rendered message>"`. So the coding agent sees:
 
 ```
-<LLM-friendly message> | <structured fields>
-```
-
-**LLM-friendly message** (before the pipe): A clear, self-contained sentence explaining what happened and why. Must start with "Falco" to attribute the enforcement (e.g., "Falco blocked...", "Falco requires confirmation..."). The coding agent presents this to the user. Use resolved field values (e.g., `%tool.real_file_path`) so the message is informative. Avoid jargon or raw field names.
-
-**Structured fields** (after the pipe): Key=value pairs for logging, auditing, and debugging. Always include `correlation=%correlation.id`.
-
-The broker passes the full rendered output as the verdict reason, prefixed by the rule name: `"Rule Name: <rendered output>"`. So the coding agent sees:
-
-```
-Deny writing to sensitive paths: Falco blocked writing to /etc/passwd because it is a sensitive path | file=/etc/passwd cwd=/home/user/project ...
+Deny writing to sensitive paths: Falco blocked writing to /etc/passwd because it is a sensitive path | For AI Agents: inform the user that this action was flagged by a Falco security rule | correlation=%correlation.id
 ```
 
 ### Example
@@ -97,9 +92,7 @@ Deny writing to sensitive paths: Falco blocked writing to /etc/passwd because it
     and (tool.input_command contains "| sh"
          or tool.input_command contains "| bash")
   output: >
-    Falco blocked piping to a shell interpreter |
-    command=%tool.input_command
-    correlation=%correlation.id agent=%agent.name tool=%tool.name
+    Falco blocked piping to a shell interpreter (%tool.input_command)
   priority: CRITICAL
   source: coding_agent
   tags: [coding_agent_deny]

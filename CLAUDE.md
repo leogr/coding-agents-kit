@@ -106,22 +106,45 @@ Path fields come in raw/real pairs:
 
 ### Rule output convention
 
-The rule `output:` field is the primary message the coding agent receives as the verdict reason. It uses a two-part format separated by a pipe (`|`):
+The rule `output:` field is an LLM-friendly sentence explaining what happened and why. It must start with "Falco" to attribute the enforcement. Use resolved field values (e.g., `%tool.real_file_path`) to make the message informative. Keep it clean — no structured key=value pairs.
 
-```
-<LLM-friendly message> | <structured fields>
-```
-
-- **LLM-friendly message** (before `|`): A clear, self-contained sentence explaining what happened and why. Must start with "Falco" to attribute the enforcement. The coding agent presents this to the user. Use resolved field values (e.g., `%tool.real_file_path`) to make the message informative.
-- **Structured fields** (after `|`): `key=%field` pairs for logging, auditing, and debugging. Always include `correlation=%correlation.id`.
-
-The broker constructs the verdict reason as `"<rule name>: <rendered output>"`. So the coding agent sees, for example:
-
-```
-Deny writing to sensitive paths: Falco blocked writing to /etc/passwd because it is a sensitive path | file=/etc/passwd cwd=/home/user/project ...
+```yaml
+output: >
+  Falco blocked writing to %tool.real_file_path because it is a sensitive path
 ```
 
-This gives the agent both the rule name and a human-readable explanation. See [`rules/README.md`](rules/README.md) for the full convention and examples.
+Structured fields (correlation.id, etc.) are automatically available in the JSON alert's `output_fields` via the `append_output` config. This cleanly separates the human-readable message from machine-readable data.
+
+The `append_output` config appends an instruction for AI agents to every coding_agent alert:
+```yaml
+append_output:
+  - match:
+      source: coding_agent
+    extra_output: " | For AI Agents: inform the user that this action was flagged by a Falco security rule | correlation=%correlation.id"
+```
+
+The broker constructs the verdict reason as `"<rule name>: <rendered message>"`. So the coding agent sees:
+
+```
+Deny writing to sensitive paths: Falco blocked writing to /etc/passwd because it is a sensitive path | For AI Agents: inform the user that this action was flagged by a Falco security rule | correlation=%correlation.id
+```
+
+### JSON alert format
+
+The Falco config uses `json_include_message_property: true` and `json_include_output_property: false`. The `message` field contains the rule output without the timestamp/priority prefix — clean text for verdict reasons. The `output` field (which includes the prefix) is excluded to reduce noise.
+
+The `correlation.id` field is declared with `add_output()` in the plugin, making it a suggested output field that Falco automatically includes in `output_fields` for every alert.
+
+The plugin's HTTP server reads:
+- `message` — used as the verdict reason (prefixed with the rule name)
+- `tags` — for verdict classification (deny/ask/seen)
+- `output_fields.correlation.id` — for routing the verdict to the correct pending request
+
+### Seen rule as audit log
+
+The catch-all seen rule includes all available fields in its output template. This means every event produces a complete audit record in `output_fields` exactly once (via the seen alert). Other rules (deny/ask) only include the fields they reference in their LLM-friendly message. Events can be correlated across all alerts using `correlation.id`.
+
+See [`rules/README.md`](rules/README.md) for the full output convention and examples.
 
 ### http_output for alert feedback
 

@@ -138,9 +138,7 @@ Example — block piping content to shell interpreters:
          or tool.input_command contains "| bash"
          or tool.input_command contains "| zsh")
   output: >
-    Falco blocked piping to a shell interpreter |
-    command=%tool.input_command
-    correlation=%correlation.id agent=%agent.name tool=%tool.name
+    Falco blocked piping to a shell interpreter (%tool.input_command)
   priority: CRITICAL
   source: coding_agent
   tags: [coding_agent_deny]

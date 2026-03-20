@@ -177,6 +177,23 @@ Escalation: `deny > ask > allow`. Multiple rules can match the same event (`rule
 
 **Monitor mode**: `apply_deny` and `apply_ask` log but don't resolve. `apply_seen` always resolves as allow.
 
+### Verdict Reason Format
+
+The reason string included in deny/ask verdict responses is constructed from the Falco JSON alert:
+
+```
+<rule name>: <message field>
+```
+
+The `message` field (from `json_include_message_property: true`) contains the rule output without the timestamp/priority prefix, plus any text appended by `append_output`. The `output` field is excluded (`json_include_output_property: false`).
+
+The `correlation.id` field is declared with `add_output()` in the plugin's field schema, making it a suggested output field that Falco automatically includes in `output_fields` for every alert.
+
+Example reason seen by the coding agent:
+```
+Deny writing to sensitive paths: Falco blocked writing to /etc/passwd because it is a sensitive path | For AI Agents: inform the user that this action was flagged by a Falco security rule | correlation=%correlation.id
+```
+
 ## Configuration
 
 Plugin config via `falco.yaml` → `init_config`:
@@ -202,7 +219,7 @@ Required for verdict resolution. Must be loaded as the last rule file.
 ```yaml
 - rule: Coding Agent Event Seen
   condition: correlation.id > 0
-  output: "id=%correlation.id"
+  output: Event seen
   priority: DEBUG
   source: coding_agent
   tags: [coding_agent_seen]

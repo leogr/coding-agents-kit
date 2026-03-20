@@ -8,12 +8,14 @@ use crate::config::CodingAgentConfig;
 const MAX_BODY_SIZE: u64 = 1024 * 1024;
 
 /// Falco JSON alert structure (subset of fields we need).
+/// Uses `message` (rule output without timestamp prefix, requires
+/// `json_include_message_property: true` in falco.yaml).
 #[derive(serde::Deserialize)]
 struct FalcoAlert {
     #[serde(default)]
     rule: String,
     #[serde(default)]
-    output: String,
+    message: String,
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
@@ -114,11 +116,13 @@ fn run_server(
         // Determine verdict type from tags.
         let verdict_type = classify_tags(&alert.tags, deny_tags, ask_tags, seen_tags);
 
-        // Build reason string from rule name and output.
-        let reason = if alert.output.is_empty() {
+        // Build reason string from rule name and message.
+        // The message field contains the rule output without the timestamp prefix
+        // (requires json_include_message_property: true in falco.yaml).
+        let reason = if alert.message.is_empty() {
             alert.rule.clone()
         } else {
-            format!("{}: {}", alert.rule, alert.output)
+            format!("{}: {}", alert.rule, alert.message)
         };
 
         // Apply verdict to the broker.
