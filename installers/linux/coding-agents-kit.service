@@ -1,0 +1,19 @@
+[Unit]
+Description=coding-agents-kit - Runtime Security for AI Coding Agents with Falco
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPost=@PREFIX@/bin/coding-agents-kit-ctl hook add
+ExecStart=@PREFIX@/bin/falco -U \
+  -c @PREFIX@/config/falco.yaml \
+  --disable-source syscall
+ExecStopPost=@PREFIX@/bin/coding-agents-kit-ctl hook remove
+StandardOutput=append:@PREFIX@/log/falco.log
+StandardError=append:@PREFIX@/log/falco.err
+Restart=on-failure
+RestartSec=5
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target

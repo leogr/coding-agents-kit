@@ -1,0 +1,23 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# preinstall — Run before .pkg installs files to ~/.coding-agents-kit/
+#
+# Stops any existing service so files can be overwritten safely.
+
+INSTALL_LOCATION="$2"
+PREFIX="${INSTALL_LOCATION}/.coding-agents-kit"
+USER_HOME="${INSTALL_LOCATION}"
+PLIST_FILE="${USER_HOME}/Library/LaunchAgents/dev.falcosecurity.coding-agents-kit.plist"
+OWNER=$(stat -f '%Su' "$USER_HOME" 2>/dev/null)
+
+# Stop existing service if running.
+if [[ -f "$PLIST_FILE" ]]; then
+    if [[ -n "$OWNER" && "$OWNER" != "root" ]]; then
+        su "$OWNER" -c "launchctl unload '$PLIST_FILE'" 2>/dev/null || true
+    else
+        launchctl unload "$PLIST_FILE" 2>/dev/null || true
+    fi
+fi
+
+exit 0

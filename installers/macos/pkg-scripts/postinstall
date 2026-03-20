@@ -1,0 +1,59 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# postinstall — Run after .pkg installs files to ~/.coding-agents-kit/
+#
+# Arguments from macOS Installer:
+#   $1 = package path
+#   $2 = install location (e.g., /Users/username for user-domain installs)
+#   $3 = target volume
+#   $4 = root directory for the system
+
+INSTALL_LOCATION="$2"
+PREFIX="${INSTALL_LOCATION}/.coding-agents-kit"
+USER_HOME="${INSTALL_LOCATION}"
+
+# ---------------------------------------------------------------------------
+# Render launchd templates
+# ---------------------------------------------------------------------------
+
+PLIST_DIR="${USER_HOME}/Library/LaunchAgents"
+PLIST_FILE="${PLIST_DIR}/dev.falcosecurity.coding-agents-kit.plist"
+
+mkdir -p "$PLIST_DIR"
+mkdir -p "$PREFIX/log"
+
+# Render plist with actual prefix and HOME.
+sed -e "s|@PREFIX@|${PREFIX}|g" -e "s|@HOME@|${USER_HOME}|g" \
+    "$PREFIX/launchd/dev.falcosecurity.coding-agents-kit.plist" \
+    > "$PLIST_FILE"
+
+# Render launcher script.
+sed "s|@PREFIX@|${PREFIX}|g" \
+    "$PREFIX/launchd/coding-agents-kit-launcher.sh" \
+    > "$PREFIX/bin/coding-agents-kit-launcher.sh"
+chmod 755 "$PREFIX/bin/coding-agents-kit-launcher.sh"
+
+# ---------------------------------------------------------------------------
+# Create user rules directory (if not exists)
+# ---------------------------------------------------------------------------
+
+if [[ ! -d "$PREFIX/rules/user" ]]; then
+    mkdir -p "$PREFIX/rules/user"
+fi
+
+# ---------------------------------------------------------------------------
+# Start service
+# ---------------------------------------------------------------------------
+
+# Get the actual username from the install location path.
+OWNER=$(stat -f '%Su' "$USER_HOME")
+
+# Load launchd agent as the installing user (postinstall runs as root).
+if [[ -n "$OWNER" && "$OWNER" != "root" ]]; then
+    su "$OWNER" -c "launchctl load '$PLIST_FILE'" 2>/dev/null || true
+else
+    launchctl load "$PLIST_FILE" 2>/dev/null || true
+fi
+
+exit 0

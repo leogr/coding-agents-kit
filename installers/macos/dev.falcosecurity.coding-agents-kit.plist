@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.falcosecurity.coding-agents-kit</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@PREFIX@/bin/coding-agents-kit-launcher.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>@PREFIX@/log/falco.log</string>
+	<key>StandardErrorPath</key>
+	<string>@PREFIX@/log/falco.err</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>@HOME@</string>
+	</dict>
+</dict>
+</plist>
