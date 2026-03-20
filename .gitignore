@@ -1,0 +1,8 @@
+# Rust build artifacts
+target/
+
+# Temporary / archived files
+tmp/
+
+# Packaging build output
+build/
