@@ -1,0 +1,33 @@
+# Plugin configuration for coding-agents-kit.
+# Merged into falco.yaml via config_files (append strategy).
+
+plugins:
+  - name: coding_agent
+    library_path: ${HOME}/.coding-agents-kit/share/libcoding_agent_plugin.so
+    init_config:
+      # Operational mode: "enforcement" (default) or "monitor".
+      # In monitor mode, rules are evaluated and logged but all verdicts resolve as allow.
+      # Changed via: coding-agents-kit-ctl mode <enforcement|monitor>
+      mode: enforcement
+      socket_path: ${HOME}/.coding-agents-kit/run/broker.sock
+      http_port: 2802
+
+load_plugins:
+  - coding_agent
+
+# Rules: default ruleset first, then user overrides, seen rule last.
+# Non-existent paths are silently skipped by Falco.
+rules_files:
+  - ${HOME}/.coding-agents-kit/rules/default/coding_agents_rules.yaml
+  - ${HOME}/.coding-agents-kit/rules/user
+  - ${HOME}/.coding-agents-kit/rules/seen.yaml
+
+# Minimum rule priority. Must be "debug" so that the catch-all seen rule
+# (priority: DEBUG) always fires. Without it, verdict resolution breaks.
+# Do not change this value.
+priority: debug
+
+# Alert feedback to the plugin's embedded HTTP server.
+http_output:
+  enabled: true
+  url: http://127.0.0.1:2802

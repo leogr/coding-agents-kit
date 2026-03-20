@@ -1,0 +1,40 @@
+# Base Falco configuration for coding-agents-kit.
+# Run with: falco -c ~/.coding-agents-kit/config/falco.yaml
+#
+# This config fully isolates Falco from system-wide defaults (/etc/falco/).
+# All paths use ${HOME} expansion (Falco native).
+
+# Load the plugin config fragment (merged with append strategy).
+config_files:
+  - ${HOME}/.coding-agents-kit/config/falco.coding_agents_plugin.yaml
+
+# No kernel driver — pure plugin mode.
+engine:
+  kind: nodriver
+
+# JSON output for machine-readable alerts (required by the plugin's HTTP receiver).
+json_output: true
+
+# All matching rules must fire per event.
+# Required so that deny/ask rules AND the catch-all seen rule both trigger.
+rule_matching: all
+
+# Only stdout output (alerts also go to http_output, configured in the plugin fragment).
+stdout_output:
+  enabled: true
+
+# Disable non-essential outputs and services.
+syslog_output:
+  enabled: false
+file_output:
+  enabled: false
+program_output:
+  enabled: false
+webserver:
+  enabled: false
+
+# Watch config files for changes. When a change is detected, Falco performs
+# a full restart (destroy + re-init, NOT a hot-reload). This means background
+# threads are destroyed and the broker socket is briefly unavailable (~2-3s).
+# Enables mode switching via coding-agents-kit-ctl without manual service restart.
+watch_config_files: true
