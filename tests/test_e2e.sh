@@ -65,11 +65,27 @@ cat > "$RULES_DIR/deny.yaml" << 'YAML'
 
 - rule: Deny reading sensitive paths
   desc: Block reads from sensitive paths
-  condition: tool.name = "Read" and (tool.real_file_path startswith "/etc/" or tool.real_file_path startswith "/private/etc/" or tool.real_file_path contains "/.ssh/")
+  condition: tool.name = "Read" and (tool.real_file_path startswith "/etc/" or tool.real_file_path startswith "/private/etc/" or tool.real_file_path contains "/.ssh/" or tool.real_file_path contains "/.aws/")
   output: "Falco blocked reading %tool.real_file_path because it is a sensitive path"
   priority: CRITICAL
   source: coding_agent
   tags: [coding_agent_deny]
+
+- rule: Deny writing to ssh dir
+  desc: Block writes to .ssh directories
+  condition: tool.name in ("Write", "Edit") and tool.real_file_path contains "/.ssh/"
+  output: "Falco blocked writing to %tool.real_file_path because .ssh is a sensitive directory"
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny]
+
+- rule: Monitor outside cwd
+  desc: Log all file access outside working directory (informational, no verdict)
+  condition: tool.name in ("Write", "Edit", "Read") and tool.real_file_path != "" and not tool.real_file_path startswith val(agent.real_cwd)
+  output: "File access outside cwd | file=%tool.real_file_path cwd=%agent.real_cwd"
+  priority: NOTICE
+  source: coding_agent
+  tags: []
 YAML
 
 cat > "$RULES_DIR/seen.yaml" << 'YAML'
@@ -84,12 +100,21 @@ YAML
 
 # --- Helpers ---
 cleanup() {
-    [[ -n "$FALCO_PID" ]] && kill "$FALCO_PID" 2>/dev/null && wait "$FALCO_PID" 2>/dev/null
+    stop_falco
     rm -rf "$E2E_DIR"
 }
 trap cleanup EXIT
 
+stop_falco() {
+    if [[ -n "$FALCO_PID" ]]; then
+        kill "$FALCO_PID" 2>/dev/null && wait "$FALCO_PID" 2>/dev/null
+        FALCO_PID=""
+    fi
+}
+
 start_falco() {
+    local mode="${1:-enforcement}"
+    stop_falco
     rm -f "$SOCK"
     # Use inline config overrides so the test does not depend on an installed
     # config at ~/.coding-agents-kit/. This makes the test self-contained.
@@ -98,7 +123,7 @@ start_falco() {
         -o "config_files=" \
         -o "plugins[0].name=coding_agent" \
         -o "plugins[0].library_path=$PLUGIN_LIB" \
-        -o "plugins[0].init_config={\"socket_path\":\"$SOCK\",\"http_port\":$HTTP_PORT}" \
+        -o "plugins[0].init_config={\"socket_path\":\"$SOCK\",\"http_port\":$HTTP_PORT,\"mode\":\"$mode\"}" \
         -o "load_plugins[0]=coding_agent" \
         -o "rules_files[0]=$RULES_DIR/deny.yaml" \
         -o "rules_files[1]=$RULES_DIR/seen.yaml" \
@@ -260,6 +285,107 @@ echo "=== Deny: write to /etc does not get ask (escalation) ==="
 # Write to /etc/ is both outside cwd and a sensitive path — deny must win over ask.
 out=$(run_hook "$(make_input Write '{"file_path":"/etc/hosts","content":"x"}' /tmp/myproject toolu_escalation)")
 assert_decision "$out" "deny" "deny wins over ask (verdict escalation)"
+
+# --- Edit tool (same rules as Write, verify both match) ---
+
+echo "=== Deny: edit to /etc/ ==="
+out=$(run_hook "$(make_input Edit '{"file_path":"/etc/passwd","old_string":"x","new_string":"y"}' /tmp toolu_deny_edit_etc)")
+assert_decision "$out" "deny" "edit /etc denied"
+
+echo "=== Ask: edit outside cwd ==="
+out=$(run_hook "$(make_input Edit '{"file_path":"/home/other/file.txt","old_string":"x","new_string":"y"}' /tmp/myproject toolu_ask_edit_outside)")
+assert_decision "$out" "ask" "edit outside cwd asks"
+
+echo "=== Allow: edit inside cwd ==="
+out=$(run_hook "$(make_input Edit '{"file_path":"/tmp/myproject/file.txt","old_string":"x","new_string":"y"}' /tmp/myproject toolu_allow_edit_inside)")
+assert_decision "$out" "allow" "edit inside cwd allowed"
+
+# --- Sensitive directory variants ---
+
+echo "=== Deny: write to .ssh/ ==="
+out=$(run_hook "$(make_input Write '{"file_path":"/home/user/.ssh/authorized_keys","content":"x"}' /tmp toolu_deny_write_ssh)")
+assert_decision "$out" "deny" "write to .ssh denied"
+
+echo "=== Deny: edit .ssh/ ==="
+out=$(run_hook "$(make_input Edit '{"file_path":"/home/user/.ssh/config","old_string":"x","new_string":"y"}' /tmp toolu_deny_edit_ssh)")
+assert_decision "$out" "deny" "edit .ssh denied"
+
+echo "=== Deny: read .aws/ ==="
+out=$(run_hook "$(make_input Read '{"file_path":"/home/user/.aws/credentials"}' /tmp toolu_deny_read_aws)")
+assert_decision "$out" "deny" "read .aws/credentials denied"
+
+# --- Bash edge cases ---
+
+echo "=== Allow: rm without -rf (not dangerous) ==="
+out=$(run_hook "$(make_input Bash '{"command":"rm file.txt"}' /tmp toolu_allow_rm_safe)")
+assert_decision "$out" "allow" "rm without -rf allowed"
+
+echo "=== Deny: rm -rf in chained command ==="
+out=$(run_hook "$(make_input Bash '{"command":"echo yes && rm -rf /tmp/target"}' /tmp toolu_deny_rmrf_chain)")
+assert_decision "$out" "deny" "rm -rf in chained command denied"
+
+# --- Tools that should always allow (no matching rules) ---
+
+echo "=== Allow: Agent tool ==="
+out=$(run_hook "$(make_input Agent '{"prompt":"do something","description":"test"}' /tmp toolu_allow_agent)")
+assert_decision "$out" "allow" "Agent tool allowed (no rules match)"
+
+echo "=== Allow: Glob tool ==="
+out=$(run_hook "$(make_input Glob '{"pattern":"*.rs"}' /tmp toolu_allow_glob)")
+assert_decision "$out" "allow" "Glob tool allowed (no rules match)"
+
+echo "=== Allow: WebSearch tool ==="
+out=$(run_hook "$(make_input WebSearch '{"query":"rust programming"}' /tmp toolu_allow_websearch)")
+assert_decision "$out" "allow" "WebSearch tool allowed (no rules match)"
+
+# --- Path resolution edge cases ---
+
+echo "=== Deny: write with path traversal to /etc/ ==="
+# /tmp/myproject/../../etc/passwd resolves to /etc/passwd
+out=$(run_hook "$(make_input Write '{"file_path":"/tmp/myproject/../../etc/passwd","content":"x"}' /tmp/myproject toolu_deny_traversal)")
+assert_decision "$out" "deny" "path traversal to /etc/ denied"
+
+echo "=== Allow: relative path inside cwd ==="
+out=$(run_hook "$(make_input Write '{"file_path":"src/main.rs","content":"x"}' /tmp/myproject toolu_allow_relative)")
+assert_decision "$out" "allow" "relative path inside cwd allowed"
+
+# --- Monitor rule (no verdict tag — still allows) ---
+
+echo "=== Allow: read outside cwd triggers monitor but still allows ==="
+# The Monitor outside cwd rule fires (NOTICE, empty tags) but doesn't affect the verdict.
+out=$(run_hook "$(make_input Read '{"file_path":"/tmp/other/data.txt"}' /tmp/myproject toolu_monitor_read)")
+assert_decision "$out" "allow" "monitor-only rule does not block"
+
+# --- MCP tool field extraction ---
+
+echo "=== Allow: MCP tool with server name ==="
+out=$(run_hook "$(make_input 'mcp__ide__getDiagnostics' '{"uri":"file:///tmp/test.ts"}' /tmp toolu_allow_mcp_ide)")
+assert_decision "$out" "allow" "MCP tool with server name allowed"
+
+# --- Monitor mode tests ---
+# Restart Falco in monitor mode: rules evaluate and log, but all verdicts
+# resolve as allow. This verifies the broker's monitor mode branches.
+echo ""
+echo "=== Restarting Falco in monitor mode ==="
+start_falco monitor || exit 1
+echo "Falco running in monitor mode (PID=$FALCO_PID)"
+echo ""
+
+echo "=== Monitor: rm -rf resolves as allow ==="
+out=$(run_hook "$(make_input Bash '{"command":"rm -rf /"}' /tmp toolu_mon_rmrf)")
+assert_decision "$out" "allow" "monitor mode: rm -rf allowed (not enforced)"
+
+echo "=== Monitor: write to /etc/ resolves as allow ==="
+out=$(run_hook "$(make_input Write '{"file_path":"/etc/passwd","content":"x"}' /tmp toolu_mon_etc)")
+assert_decision "$out" "allow" "monitor mode: write /etc/ allowed (not enforced)"
+
+echo "=== Monitor: write outside cwd resolves as allow ==="
+out=$(run_hook "$(make_input Write '{"file_path":"/home/other/file.txt","content":"x"}' /tmp/myproject toolu_mon_outside)")
+assert_decision "$out" "allow" "monitor mode: write outside cwd allowed (not enforced)"
+
+echo "=== Monitor: safe command still allowed ==="
+out=$(run_hook "$(make_input Bash '{"command":"ls -la"}' /tmp toolu_mon_ls)")
+assert_decision "$out" "allow" "monitor mode: safe command allowed"
 
 # --- Results ---
 echo ""
