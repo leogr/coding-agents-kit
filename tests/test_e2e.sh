@@ -362,6 +362,28 @@ echo "=== Allow: MCP tool with server name ==="
 out=$(run_hook "$(make_input 'mcp__ide__getDiagnostics' '{"uri":"file:///tmp/test.ts"}' /tmp toolu_allow_mcp_ide)")
 assert_decision "$out" "allow" "MCP tool with server name allowed"
 
+# --- Health check (uses the ctl binary) ---
+
+CTL="${ROOT_DIR}/tools/coding-agents-kit-ctl/target/release/coding-agents-kit-ctl"
+if [[ -x "$CTL" ]]; then
+    echo "=== Health check via ctl ==="
+    # The health command sends a synthetic event through the interceptor and checks the verdict.
+    # We need to point it at our test prefix (with interceptor binary and broker socket).
+    # Create a minimal prefix structure pointing to the E2E socket.
+    HEALTH_PREFIX="${E2E_DIR}/health-prefix"
+    mkdir -p "$HEALTH_PREFIX/bin" "$HEALTH_PREFIX/run"
+    ln -sf "$HOOK" "$HEALTH_PREFIX/bin/claude-interceptor"
+    ln -sf "$SOCK" "$HEALTH_PREFIX/run/broker.sock"
+    out=$("$CTL" --prefix="$HEALTH_PREFIX" health 2>&1)
+    if echo "$out" | grep -q "^OK:"; then
+        pass "health check passes"
+    else
+        fail "health check" "OK: ..." "$out"
+    fi
+else
+    echo "  SKIP: ctl binary not built (skipping health check test)"
+fi
+
 # --- Monitor mode tests ---
 # Restart Falco in monitor mode: rules evaluate and log, but all verdicts
 # resolve as allow. This verifies the broker's monitor mode branches.

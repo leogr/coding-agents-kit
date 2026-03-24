@@ -537,6 +537,85 @@ fn uninstall(prefix: &PathBuf, keep_user_rules: bool) {
 }
 
 // ---------------------------------------------------------------------------
+// Health check
+// ---------------------------------------------------------------------------
+
+fn health(prefix: &PathBuf) {
+    let interceptor = prefix.join("bin/claude-interceptor");
+    let socket = prefix.join("run/broker.sock");
+
+    // Check interceptor binary exists.
+    if !interceptor.exists() {
+        eprintln!("FAIL: interceptor not found at {}", interceptor.display());
+        process::exit(1);
+    }
+
+    // Check broker socket exists.
+    if !socket.exists() {
+        eprintln!("FAIL: broker socket not found at {}", socket.display());
+        eprintln!("Is the service running?");
+        process::exit(1);
+    }
+
+    // Send a synthetic event through the full pipeline.
+    // Uses a harmless Bash "echo" command that should resolve as allow.
+    let test_event = r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo health-check"},"session_id":"health-check","cwd":"/tmp","tool_use_id":"health-check"}"#;
+
+    let output = Command::new(&interceptor)
+        .env("CODING_AGENTS_KIT_SOCKET", &socket)
+        .env("CODING_AGENTS_KIT_TIMEOUT_MS", "5000")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(test_event.as_bytes());
+            }
+            drop(child.stdin.take());
+            child.wait_with_output()
+        });
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if stdout.contains("\"permissionDecision\"") {
+                // Parse to show a cleaner message.
+                if stdout.contains("\"allow\"") {
+                    println!("OK: pipeline healthy (synthetic event → allow)");
+                } else if stdout.contains("\"deny\"") {
+                    println!("OK: pipeline healthy (synthetic event → deny)");
+                    println!("  Note: a deny rule matched the health-check event.");
+                    println!("  This is expected if you have rules matching Bash commands.");
+                } else if stdout.contains("\"ask\"") {
+                    println!("OK: pipeline healthy (synthetic event → ask)");
+                } else {
+                    println!("OK: pipeline responded (unexpected verdict)");
+                    println!("  Response: {}", stdout.trim());
+                }
+            } else {
+                eprintln!("FAIL: interceptor returned unexpected output");
+                eprintln!("  Output: {}", stdout.trim());
+                process::exit(1);
+            }
+        }
+        Ok(out) => {
+            eprintln!("FAIL: interceptor exited with code {}", out.status);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if !stderr.is_empty() {
+                eprintln!("  Stderr: {}", stderr.trim());
+            }
+            process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("FAIL: could not run interceptor: {e}");
+            process::exit(1);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Logs
 // ---------------------------------------------------------------------------
 
@@ -580,6 +659,7 @@ fn print_usage() {
     eprintln!("  enable           Enable service auto-start on login");
     eprintln!("  disable          Disable service auto-start");
     eprintln!("  status           Show service status");
+    eprintln!("  health           Check pipeline health (send synthetic event)");
     eprintln!("  logs             Follow Falco stdout logs (tail -f)");
     eprintln!("  logs --err       Follow Falco stderr logs");
     eprintln!();
@@ -620,6 +700,7 @@ fn main() {
         ["enable"] => service_enable(),
         ["disable"] => service_disable(),
         ["status"] => service_status(),
+        ["health"] => health(&prefix),
         ["logs"] => logs(&prefix, false),
         ["logs", "--err"] => logs(&prefix, true),
         ["uninstall"] => uninstall(&prefix, false),
