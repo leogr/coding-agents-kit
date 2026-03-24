@@ -278,6 +278,25 @@ fn normalize_path(path: &Path) -> PathBuf {
     result
 }
 
+/// Normalize path separators to forward slashes for cross-platform rule portability.
+/// On Windows, `canonicalize` and `PathBuf::to_string_lossy` produce backslashes,
+/// but Falco rules should use forward slashes consistently.
+fn normalize_separators(path: String) -> String {
+    #[cfg(windows)]
+    {
+        // Strip \\?\ prefix that Windows canonicalize may add.
+        let stripped = path
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&path)
+            .to_string();
+        stripped.replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    {
+        path
+    }
+}
+
 /// Resolve a single path: canonicalize if possible, otherwise lexically normalize.
 fn resolve_path(raw: &str) -> String {
     if raw.is_empty() {
@@ -285,10 +304,10 @@ fn resolve_path(raw: &str) -> String {
     }
     // Try filesystem canonicalization first (resolves symlinks).
     if let Ok(resolved) = std::fs::canonicalize(raw) {
-        return resolved.to_string_lossy().into_owned();
+        return normalize_separators(resolved.to_string_lossy().into_owned());
     }
     // Fallback: lexical normalization only.
-    normalize_path(Path::new(raw)).to_string_lossy().into_owned()
+    normalize_separators(normalize_path(Path::new(raw)).to_string_lossy().into_owned())
 }
 
 /// Resolve a file path: if relative, join with cwd first, then resolve.
@@ -306,10 +325,10 @@ fn resolve_file_path(file_path: &str, resolved_cwd: &str) -> String {
     };
     // Try filesystem canonicalization first.
     if let Ok(resolved) = std::fs::canonicalize(&abs) {
-        return resolved.to_string_lossy().into_owned();
+        return normalize_separators(resolved.to_string_lossy().into_owned());
     }
     // Fallback: lexical normalization.
-    normalize_path(&abs).to_string_lossy().into_owned()
+    normalize_separators(normalize_path(&abs).to_string_lossy().into_owned())
 }
 
 fn extract_mcp_server(tool_name: &str) -> String {
