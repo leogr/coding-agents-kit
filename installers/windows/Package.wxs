@@ -20,24 +20,9 @@
       <ComponentGroupRef Id="RuntimeDirs" />
     </Feature>
 
-    <!-- Post-install: generate configs, register hook, enable auto-start -->
-    <CustomAction Id="RunPostInstall"
-                  Directory="BINDIR"
-                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[SCRIPTSDIR]postinstall.ps1&quot; -Prefix &quot;[INSTALLDIR].&quot;"
-                  Return="check"
-                  Impersonate="yes" />
-
-    <!-- Pre-uninstall: stop service, remove hook, remove auto-start -->
-    <CustomAction Id="RunUninstall"
-                  Directory="BINDIR"
-                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;[SCRIPTSDIR]uninstall.ps1&quot; -Prefix &quot;[INSTALLDIR].&quot;"
-                  Return="ignore"
-                  Impersonate="yes" />
-
-    <InstallExecuteSequence>
-      <Custom Action="RunPostInstall" After="InstallFiles" Condition="NOT Installed AND NOT REMOVE" />
-      <Custom Action="RunUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
-    </InstallExecuteSequence>
+    <!-- Custom actions are not used for per-user installs (error 1721).
+         Post-install setup is handled by package.ps1 after MSI deployment.
+         Uninstall cleanup is handled by coding-agents-kit-ctl uninstall. -->
   </Package>
 
   <!-- Directory layout under %LOCALAPPDATA%\coding-agents-kit\ -->

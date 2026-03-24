@@ -243,9 +243,23 @@ $uninstallScript = Join-Path $OutputDir 'Uninstall-CodingAgentsKit.ps1'
 if (`$p.ExitCode -ne 0) { Write-Error "Uninstall failed (exit `$(`$p.ExitCode))" }
 "@ | Set-Content $uninstallScript -Encoding UTF8
 
+# ---------------------------------------------------------------------------
+# Emit install helper script (runs MSI + postinstall)
+# ---------------------------------------------------------------------------
+
+$installScript = Join-Path $OutputDir 'Install-CodingAgentsKit.ps1'
+@"
+# Install coding-agents-kit $Version
+`$msi = Join-Path `$PSScriptRoot '$MsiName'
+`$p = Start-Process msiexec -ArgumentList '/i', `$msi, '/quiet' -Wait -PassThru
+if (`$p.ExitCode -ne 0) { Write-Error "MSI install failed (exit `$(`$p.ExitCode))"; exit 1 }
+# Run post-install setup
+`$prefix = Join-Path `$env:LOCALAPPDATA 'coding-agents-kit'
+& "`$prefix\scripts\postinstall.ps1" -Prefix `$prefix
+"@ | Set-Content $installScript -Encoding UTF8
+
 Write-Host ""
 Write-Host "MSI created: $(Join-Path $OutputDir $MsiName)"
 Write-Host ""
-Write-Host "Install:   msiexec /i $MsiName"
-Write-Host "Silent:    msiexec /i $MsiName /quiet"
+Write-Host "Install:   powershell -File Install-CodingAgentsKit.ps1"
 Write-Host "Uninstall: powershell -File Uninstall-CodingAgentsKit.ps1"

@@ -22,8 +22,8 @@ $RulesDir = Join-Path $Prefix 'rules'
 $RunDir = Join-Path $Prefix 'run'
 $LogDir = Join-Path $Prefix 'log'
 
-# Ensure runtime directories exist
-foreach ($dir in @($RunDir, $LogDir)) {
+# Ensure all directories exist
+foreach ($dir in @($ConfigDir, $RunDir, $LogDir)) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
 }
 
