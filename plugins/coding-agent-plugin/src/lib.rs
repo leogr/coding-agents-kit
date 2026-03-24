@@ -44,6 +44,9 @@ pub struct CodingAgentPlugin {
     /// Handle to the HTTP alert receiver background thread.
     #[allow(dead_code)]
     http_thread: Option<std::thread::JoinHandle<()>>,
+    /// Handle to the pending request reaper thread.
+    #[allow(dead_code)]
+    reaper_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Plugin for CodingAgentPlugin {
@@ -83,18 +86,41 @@ impl Plugin for CodingAgentPlugin {
         // Spawn HTTP alert receiver thread.
         let http_thread = Some(http_server::start(&config, Arc::clone(&broker)));
 
+        // Spawn pending request reaper thread (TTL cleanup).
+        let reaper_thread = Some(Broker::start_reaper(Arc::clone(&broker)));
+
         Ok(CodingAgentPlugin {
             config,
             event_rx,
             broker,
             socket_thread,
             http_thread,
+            reaper_thread,
         })
     }
 
     // Note: set_config() is NOT called by Falco 0.43. The watch_config_files
     // mechanism performs a full restart (destroy + init), so config changes are
     // handled by new() being called again with the updated config.
+}
+
+impl Drop for CodingAgentPlugin {
+    fn drop(&mut self) {
+        log::info!("plugin shutting down, signaling background threads...");
+        self.broker.shutdown();
+
+        // Join the reaper thread (it checks the shutdown flag every REAPER_INTERVAL_SECS).
+        if let Some(handle) = self.reaper_thread.take() {
+            let _ = handle.join();
+        }
+
+        // The socket server and HTTP server threads are blocked on accept/recv
+        // and cannot be cleanly joined without closing their listeners.
+        // Dropping them here lets the OS reclaim resources when the process exits
+        // or Falco reinitializes the plugin.
+
+        log::info!("plugin shutdown complete");
+    }
 }
 
 // Register the plugin with Falco.

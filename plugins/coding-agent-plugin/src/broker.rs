@@ -2,11 +2,20 @@ use std::io::Write;
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use dashmap::DashMap;
 
 use crate::verdict::Verdict;
+
+/// TTL for pending requests. Entries older than this are reaped.
+/// Set well above the interceptor's timeout (default 5s) to avoid false reaping
+/// during normal operation. This catches entries whose seen alert was lost.
+const PENDING_TTL_SECS: u64 = 30;
+
+/// How often the reaper thread scans for stale entries.
+const REAPER_INTERVAL_SECS: u64 = 10;
 
 /// Tracks pending requests from interceptors, waiting for verdict resolution.
 pub struct Broker {
@@ -16,6 +25,8 @@ pub struct Broker {
     next_id: AtomicU64,
     /// When true, all verdicts resolve as allow (monitor mode).
     monitor_mode: AtomicBool,
+    /// Shutdown signal for background threads.
+    shutdown: AtomicBool,
 }
 
 /// A pending request from an interceptor, awaiting a verdict.
@@ -26,6 +37,8 @@ struct PendingRequest {
     wire_id: String,
     /// The current best verdict (escalated as alerts arrive).
     current_verdict: Mutex<Option<Verdict>>,
+    /// When this request was registered.
+    created_at: Instant,
 }
 
 impl Broker {
@@ -34,7 +47,18 @@ impl Broker {
             pending: DashMap::new(),
             next_id: AtomicU64::new(1),
             monitor_mode: AtomicBool::new(false),
+            shutdown: AtomicBool::new(false),
         }
+    }
+
+    /// Signal all background threads to stop.
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns true if shutdown has been requested.
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown.load(Ordering::Relaxed)
     }
 
     /// Generate a unique correlation ID for an event.
@@ -66,6 +90,7 @@ impl Broker {
                 stream: Mutex::new(stream),
                 wire_id,
                 current_verdict: Mutex::new(None),
+                created_at: Instant::now(),
             },
         );
     }
@@ -137,9 +162,62 @@ impl Broker {
         }
     }
 
+    /// Remove stale pending requests older than the TTL.
+    /// Returns the number of reaped entries.
+    pub fn reap_stale(&self) -> usize {
+        let ttl = std::time::Duration::from_secs(PENDING_TTL_SECS);
+        let now = Instant::now();
+        let mut reaped = 0;
+
+        // Collect stale IDs first to avoid holding DashMap iterators during removal.
+        let stale_ids: Vec<u64> = self
+            .pending
+            .iter()
+            .filter(|entry| now.duration_since(entry.value().created_at) > ttl)
+            .map(|entry| *entry.key())
+            .collect();
+
+        for id in stale_ids {
+            if let Some((_, pending)) = self.pending.remove(&id) {
+                log::warn!(
+                    "reaping stale pending request {} (age {:?})",
+                    id,
+                    now.duration_since(pending.created_at)
+                );
+                // Send deny to unblock the interceptor if it's somehow still waiting.
+                let response = Verdict::Deny("request expired".to_string())
+                    .to_response_json(&pending.wire_id);
+                let mut stream = pending.stream.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = write!(stream, "{}\n", response);
+                let _ = stream.shutdown(Shutdown::Both);
+                reaped += 1;
+            }
+        }
+
+        reaped
+    }
+
     /// Number of currently pending requests.
     #[allow(dead_code)]
     pub fn pending_count(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Start a background thread that periodically reaps stale pending requests.
+    pub fn start_reaper(broker: Arc<Broker>) -> std::thread::JoinHandle<()> {
+        let interval = std::time::Duration::from_secs(REAPER_INTERVAL_SECS);
+        std::thread::Builder::new()
+            .name("cak-reaper".to_string())
+            .spawn(move || {
+                while !broker.is_shutdown() {
+                    std::thread::sleep(interval);
+                    let reaped = broker.reap_stale();
+                    if reaped > 0 {
+                        log::info!("reaper: removed {} stale pending request(s)", reaped);
+                    }
+                }
+                log::info!("reaper thread exiting");
+            })
+            .expect("failed to spawn reaper thread")
     }
 }
