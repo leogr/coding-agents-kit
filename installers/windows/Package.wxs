@@ -35,8 +35,8 @@
                   Impersonate="yes" />
 
     <InstallExecuteSequence>
-      <Custom Action="RunPostInstall" After="InstallFiles">NOT Installed AND NOT REMOVE</Custom>
-      <Custom Action="RunUninstall" Before="RemoveFiles">REMOVE="ALL"</Custom>
+      <Custom Action="RunPostInstall" After="InstallFiles" Condition="NOT Installed AND NOT REMOVE" />
+      <Custom Action="RunUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
     </InstallExecuteSequence>
   </Package>
 
