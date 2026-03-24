@@ -102,10 +102,11 @@ if (-not (Test-Path (Join-Path $SrcDir 'CMakeLists.txt'))) {
 # ---------------------------------------------------------------------------
 
 $PatchDir = $ScriptDir  # patches are alongside this script
-# NOTE: The http_output patch is not applied on Windows because building
-# OpenSSL/curl from source on Windows ARM64 fails. Instead, Windows uses
-# stdout_output with the flush patch, and the plugin reads alerts via a
-# forwarder thread. See falco-windows-http-output.patch for the deferred patch.
+# NOTE: http_output patch is not applied because both OpenSSL and curl bundled
+# builds fail on ARM64 Windows (autotools incompatibility). Instead, Windows
+# uses stdout_output with a forwarder that POSTs each JSON alert line to the
+# plugin's HTTP server. The http_output patch is kept for future use if/when
+# pre-built curl libraries become available.
 $patches = @(
     (Join-Path $PatchDir 'falco-flush-stdout.patch')
 )
@@ -159,6 +160,30 @@ foreach ($patchPath in $patches) {
 $BuildDir = Join-Path $BuildBase "falco-build-$Version-$Arch"
 New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+
+# ---------------------------------------------------------------------------
+# Find system OpenSSL (required for http_output)
+# ---------------------------------------------------------------------------
+
+$OpenSSLRoot = ''
+foreach ($candidate in @(
+    "$env:OPENSSL_ROOT_DIR",
+    'C:\Program Files\OpenSSL-Win64-ARM',
+    'C:\Program Files\OpenSSL-Win64',
+    'C:\Program Files\OpenSSL'
+)) {
+    if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path (Join-Path $candidate 'include\openssl\ssl.h'))) {
+        $OpenSSLRoot = $candidate
+        break
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($OpenSSLRoot)) {
+    Write-Host "WARNING: OpenSSL not found. Building without http_output."
+    Write-Host "  Install OpenSSL: winget install ShiningLight.OpenSSL.Dev"
+    $OpenSSLRoot = 'NOTFOUND'
+}
+Write-Host "OpenSSL: $OpenSSLRoot"
 
 Write-Host "=== Building Falco $Version ($Arch) ==="
 
