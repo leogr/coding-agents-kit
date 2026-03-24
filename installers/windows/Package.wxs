@@ -58,6 +58,9 @@
       <Component>
         <File Source="$(var.StageDir)\bin\coding-agents-kit-launcher.ps1" />
       </Component>
+      <Component>
+        <File Source="$(var.StageDir)\bin\stdout-forwarder.exe" />
+      </Component>
     </ComponentGroup>
   </Fragment>
 

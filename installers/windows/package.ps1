@@ -176,6 +176,7 @@ function Find-Artifact([string]$CrateDir, [string]$FileName) {
 
 Copy-Item (Find-Artifact (Join-Path $RootDir 'hooks\claude-code') 'claude-interceptor.exe') (Join-Path $StageDir 'bin\') -Force
 Copy-Item (Find-Artifact (Join-Path $RootDir 'tools\coding-agents-kit-ctl') 'coding-agents-kit-ctl.exe') (Join-Path $StageDir 'bin\') -Force
+Copy-Item (Find-Artifact (Join-Path $RootDir 'tools\stdout-forwarder') 'stdout-forwarder.exe') (Join-Path $StageDir 'bin\') -Force
 Copy-Item (Find-Artifact (Join-Path $RootDir 'plugins\coding-agent-plugin') 'coding_agent_plugin.dll') (Join-Path $StageDir 'share\') -Force
 
 Copy-Item (Join-Path $ScriptDir 'coding-agents-kit-launcher.ps1') (Join-Path $StageDir 'bin\') -Force
