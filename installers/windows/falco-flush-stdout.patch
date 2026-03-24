@@ -1,0 +1,24 @@
+--- a/userspace/falco/outputs_stdout.cpp
++++ b/userspace/falco/outputs_stdout.cpp
+@@ -17,6 +17,7 @@ limitations under the License.
+
+ #include "outputs_stdout.h"
+ #include <iostream>
++#include <cstdio>
+
+ void falco::outputs::output_stdout::output(const message *msg) {
+ 	//
+@@ -28,6 +29,11 @@ void falco::outputs::output_stdout::output(const message *msg) {
+ 		std::cout << std::unitbuf;
+ 	}
+ 	std::cout << msg->msg + "\n";
++	//
++	// Ensure the alert is flushed to the OS pipe immediately.
++	// On Windows, std::unitbuf alone may not flush the underlying
++	// C stdio buffer when stdout is a pipe (not a TTY).
++	//
++	std::cout.flush();
++	fflush(stdout);
+ }
+
+ void falco::outputs::output_stdout::cleanup() {
