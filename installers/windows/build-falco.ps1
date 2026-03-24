@@ -102,11 +102,11 @@ if (-not (Test-Path (Join-Path $SrcDir 'CMakeLists.txt'))) {
 # ---------------------------------------------------------------------------
 
 $PatchDir = $ScriptDir  # patches are alongside this script
-# NOTE: http_output patch is not applied because both OpenSSL and curl bundled
-# builds fail on ARM64 Windows (autotools incompatibility). Instead, Windows
-# uses stdout_output with a forwarder that POSTs each JSON alert line to the
-# plugin's HTTP server. The http_output patch is kept for future use if/when
-# pre-built curl libraries become available.
+# NOTE: http_output patch is not applied because curl's bundled autotools build
+# fails on ARM64 Windows. System OpenSSL is available (winget install
+# ShiningLight.OpenSSL.Dev) but a system curl dev package has not been tested.
+# Instead, Windows uses stdout_output with a forwarder. The http_output patch
+# (falco-windows-http-output.patch) is kept for future use.
 $patches = @(
     (Join-Path $PatchDir 'falco-flush-stdout.patch')
 )

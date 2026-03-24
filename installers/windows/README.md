@@ -136,11 +136,13 @@ The Windows port uses the same Falco plugin architecture as Linux/macOS with two
 
 1. **IPC**: TCP on `127.0.0.1:2803` instead of Unix domain sockets (Rust's `std::os::unix::net` is not available on Windows).
 
-2. **Alert delivery**: Falco's `http_output` is not available in MINIMAL_BUILD on Windows (OpenSSL/curl bundled builds fail on ARM64). Instead, Falco writes JSON alerts to stdout, and a lightweight `stdout-forwarder` binary pipes each line to the plugin's HTTP server via localhost. The pipeline is:
+2. **Alert delivery**: Falco's `http_output` requires curl, which is not currently enabled in the Windows MINIMAL_BUILD. Curl's bundled autotools build fails on ARM64 Windows; system OpenSSL is available (`winget install ShiningLight.OpenSSL.Dev`) but a matching curl development package has not been tested yet. As a workaround, Falco writes JSON alerts to stdout, and a lightweight `stdout-forwarder` binary pipes each line to the plugin's HTTP server via localhost:
 
 ```
 falco.exe -U ... | stdout-forwarder.exe http://127.0.0.1:2802
 ```
+
+> **Future improvement**: Enabling `http_output` natively (by providing system curl libraries or using x64 builds where autotools works) would eliminate the need for the stdout-forwarder. The `falco-windows-http-output.patch` is already prepared for this.
 
 ### Directory Layout (installed)
 
