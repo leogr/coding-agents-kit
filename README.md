@@ -3,7 +3,7 @@
 [![Experimental](https://img.shields.io/badge/status-experimental-orange?style=for-the-badge)](#status)
 
 [![License](https://img.shields.io/github/license/leogr/coding-agents-kit?style=flat-square)](LICENSE)
-![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS-blue?style=flat-square)
+![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS%20%7C%20Windows-blue?style=flat-square)
 ![Architectures](https://img.shields.io/badge/arch-x86__64%20%7C%20aarch64-blueviolet?style=flat-square)
 
 > **Experimental Preview** — This project is under active development and released as an early preview. Interfaces and behavior may change between releases. We welcome your [feedback](#feedback) to help shape its future.
@@ -64,6 +64,19 @@ bash install.sh
 ```
 
 The installer copies all components to `~/.coding-agents-kit/`, starts a systemd user service, and registers the hook automatically.
+
+### Windows
+
+Download the `.msi` installer from the [latest release](https://github.com/leogr/coding-agents-kit/releases/latest) and run:
+
+```powershell
+powershell -File Install-CodingAgentsKit.ps1
+```
+
+The installer deploys all components to `%LOCALAPPDATA%\coding-agents-kit\`, registers the Claude Code hook, and sets up auto-start on login.
+
+> [!NOTE]
+> x86_64 builds work on both x86_64 and ARM64 Windows (via emulation). See [`installers/windows/`](installers/windows/) for build prerequisites and details.
 
 ### Verify
 
@@ -175,10 +188,10 @@ The skill guides Claude through writing the rule, placing it in the right direct
 |-------|----------|--------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Linux (x86_64, aarch64) | Supported |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | macOS (Apple Silicon, Intel) | Supported |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Windows (x86_64, ARM64) | Supported |
 | [Codex](https://openai.com/index/codex/) | Linux, macOS | Planned |
-| — | Windows | Planned |
 
-We are actively working on expanding agent and platform support. [Codex](https://openai.com/index/codex/) integration and Windows support are next on the roadmap.
+We are actively working on expanding agent and platform support. [Codex](https://openai.com/index/codex/) integration is next on the roadmap.
 
 ## Building from Source
 
@@ -225,12 +238,30 @@ See [`installers/macos/`](installers/macos/) for details.
 </details>
 
 <details>
+<summary><strong>Windows</strong></summary>
+
+Requires: Rust (latest stable), Visual Studio 2022+ with C++ workload, CMake 3.24+, .NET Runtime 8+, WiX Toolset v4.
+
+```powershell
+powershell -File installers\windows\package.ps1 -Version 0.1.0
+```
+
+Output: `build/out/coding-agents-kit-0.1.0-windows-x64.msi`
+
+> Falco is built from source on the first run (~10 min). Subsequent builds use the cached binary.
+
+See [`installers/windows/`](installers/windows/) for detailed prerequisites and build options.
+
+</details>
+
+<details>
 <summary><strong>Individual Components</strong></summary>
 
 ```bash
 cd hooks/claude-code && cargo build --release            # Interceptor
 cd plugins/coding-agent-plugin && cargo build --release   # Falco plugin
 cd tools/coding-agents-kit-ctl && cargo build --release   # CLI tool
+cd tools/stdout-forwarder && cargo build --release        # Stdout forwarder (Windows)
 make falco-macos                                          # Falco binary (macOS only)
 ```
 
