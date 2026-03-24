@@ -11,7 +11,8 @@ pub struct CodingAgentConfig {
     #[serde(default = "default_mode")]
     pub mode: String,
 
-    /// Path to the Unix domain socket for interceptor connections.
+    /// Broker listen address. On Unix, a Unix domain socket path.
+    /// On Windows, a TCP address (e.g. "127.0.0.1:2803").
     #[serde(default = "default_socket_path")]
     pub socket_path: String,
 
@@ -37,10 +38,17 @@ fn default_mode() -> String {
 }
 
 fn default_socket_path() -> String {
-    if let Ok(home) = std::env::var("HOME") {
-        format!("{home}/.coding-agents-kit/run/broker.sock")
-    } else {
-        "/tmp/coding-agents-kit-broker.sock".to_string()
+    #[cfg(unix)]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            format!("{home}/.coding-agents-kit/run/broker.sock")
+        } else {
+            "/tmp/coding-agents-kit-broker.sock".to_string()
+        }
+    }
+    #[cfg(windows)]
+    {
+        "127.0.0.1:2803".to_string()
     }
 }
 

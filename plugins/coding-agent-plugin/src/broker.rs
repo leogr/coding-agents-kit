@@ -1,9 +1,14 @@
 use std::io::Write;
 use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+/// Cross-platform stream type for interceptor connections.
+#[cfg(unix)]
+pub type BrokerStream = std::os::unix::net::UnixStream;
+#[cfg(windows)]
+pub type BrokerStream = std::net::TcpStream;
 
 use dashmap::DashMap;
 
@@ -31,8 +36,8 @@ pub struct Broker {
 
 /// A pending request from an interceptor, awaiting a verdict.
 struct PendingRequest {
-    /// The Unix socket connection back to the interceptor.
-    stream: Mutex<UnixStream>,
+    /// The connection back to the interceptor (Unix socket or TCP).
+    stream: Mutex<BrokerStream>,
     /// The wire protocol request ID (to include in the response).
     wire_id: String,
     /// The current best verdict (escalated as alerts arrive).
@@ -83,7 +88,7 @@ impl Broker {
     /// Register a new pending request. `correlation_id` is the broker-assigned ID
     /// used for Falco alert correlation. `wire_id` is the interceptor's request ID
     /// used in the verdict response.
-    pub fn register(&self, correlation_id: u64, wire_id: String, stream: UnixStream) {
+    pub fn register(&self, correlation_id: u64, wire_id: String, stream: BrokerStream) {
         self.pending.insert(
             correlation_id,
             PendingRequest {
