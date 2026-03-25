@@ -183,12 +183,15 @@ if ([string]::IsNullOrWhiteSpace($OpenSSLRoot)) {
 Write-Host "OpenSSL: $OpenSSLRoot"
 
 # Find curl (from vcpkg or system)
+# Determine vcpkg triplet for the target architecture
+$VcpkgTriplet = if ($Arch -eq 'arm64') { 'arm64-windows-static' } else { 'x64-windows-static' }
+
 $CurlRoot = ''
 foreach ($candidate in @(
     "$env:CURL_ROOT_DIR",
-    "$env:VCPKG_ROOT\installed\x64-windows-static",
-    "$env:USERPROFILE\vcpkg\installed\x64-windows-static",
-    'C:\vcpkg\installed\x64-windows-static'
+    "$env:VCPKG_ROOT\installed\$VcpkgTriplet",
+    "$env:USERPROFILE\vcpkg\installed\$VcpkgTriplet",
+    "C:\vcpkg\installed\$VcpkgTriplet"
 )) {
     if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path (Join-Path $candidate 'include\curl\curl.h'))) {
         $CurlRoot = $candidate
@@ -202,6 +205,21 @@ if ([string]::IsNullOrWhiteSpace($CurlRoot)) {
     $CurlRoot = 'NOTFOUND'
 }
 Write-Host "curl: $CurlRoot"
+
+# Resolve OpenSSL library directory (layout varies by installer)
+$OpenSSLLibDir = ''
+foreach ($candidate in @(
+    "$OpenSSLRoot\lib",
+    "$OpenSSLRoot\lib\VC\arm64\MD",
+    "$OpenSSLRoot\lib\VC\x64\MD"
+)) {
+    if (Test-Path (Join-Path $candidate 'libssl.lib')) {
+        $OpenSSLLibDir = $candidate
+        break
+    }
+}
+if ([string]::IsNullOrWhiteSpace($OpenSSLLibDir)) { $OpenSSLLibDir = "$OpenSSLRoot\lib" }
+Write-Host "OpenSSL libs: $OpenSSLLibDir"
 
 Write-Host "=== Building Falco $Version ($Arch) ==="
 
@@ -217,6 +235,8 @@ if %ERRORLEVEL% neq 0 exit /b 1
     -DUSE_BUNDLED_OPENSSL=OFF ^
     -DOPENSSL_ROOT_DIR="$OpenSSLRoot" ^
     -DOPENSSL_INCLUDE_DIR="$OpenSSLRoot\include" ^
+    -DOPENSSL_CRYPTO_LIBRARY="$OpenSSLLibDir\libcrypto.lib" ^
+    -DOPENSSL_SSL_LIBRARY="$OpenSSLLibDir\libssl.lib" ^
     -DUSE_BUNDLED_CURL=OFF ^
     -DCURL_INCLUDE_DIR="$CurlRoot\include" ^
     -DCURL_LIBRARY="$CurlRoot\lib\libcurl.lib" ^
