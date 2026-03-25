@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
 $Hook = Join-Path $RootDir 'hooks\claude-code\target\release\claude-interceptor.exe'
-$MockBroker = Join-Path $ScriptDir 'mock_broker_tcp.ps1'
+$MockBroker = Join-Path $ScriptDir 'mock_broker_uds.ps1'
 
 # Check prerequisites
 if (-not (Test-Path $Hook)) {
@@ -32,17 +32,20 @@ function Run-Test {
         [hashtable]$ExtraEnv = @{}
     )
 
+    # Use a unique socket path per test
+    $sockPath = Join-Path $env:TEMP "cak-test-$PID-$([guid]::NewGuid().ToString('N').Substring(0,8)).sock"
+
     # Start mock broker (PowerShell subprocess)
     $brokerPsi = New-Object System.Diagnostics.ProcessStartInfo
     $brokerPsi.FileName = 'powershell.exe'
-    $brokerPsi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$MockBroker`" -Port 0 -Mode $Mode"
+    $brokerPsi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$MockBroker`" -SocketPath `"$sockPath`" -Mode $Mode"
     $brokerPsi.UseShellExecute = $false
     $brokerPsi.RedirectStandardOutput = $true
     $brokerPsi.RedirectStandardError = $true
     $brokerPsi.CreateNoWindow = $true
     $broker = [System.Diagnostics.Process]::Start($brokerPsi)
 
-    # Wait for READY signal with port
+    # Wait for READY signal
     $ready = $broker.StandardOutput.ReadLine()
     if (-not $ready -or -not $ready.StartsWith('READY')) {
         $stderr = $broker.StandardError.ReadToEnd()
@@ -50,8 +53,6 @@ function Run-Test {
         return "ERROR: broker did not start ($stderr)"
     }
 
-    $port = 0
-    if ($ready -match 'READY:(\d+)') { $port = [int]$Matches[1] }
     Start-Sleep -Milliseconds 50
 
     $hookPsi = New-Object System.Diagnostics.ProcessStartInfo
@@ -61,7 +62,7 @@ function Run-Test {
     $hookPsi.RedirectStandardOutput = $true
     $hookPsi.RedirectStandardError = $true
     $hookPsi.CreateNoWindow = $true
-    $hookPsi.EnvironmentVariables['CODING_AGENTS_KIT_SOCKET'] = "127.0.0.1:$port"
+    $hookPsi.EnvironmentVariables['CODING_AGENTS_KIT_SOCKET'] = $sockPath
     foreach ($kv in $ExtraEnv.GetEnumerator()) {
         $hookPsi.EnvironmentVariables[$kv.Key] = $kv.Value
     }
@@ -85,6 +86,7 @@ function Run-Test {
 
     try { if (-not $broker.HasExited) { $broker.Kill() } } catch {}
     try { [void]$broker.WaitForExit(2000) } catch {}
+    Remove-Item $sockPath -Force -ErrorAction SilentlyContinue
 
     Write-Output $output
 }
@@ -92,7 +94,7 @@ function Run-Test {
 function Run-HookOnly {
     param(
         [string]$InputJson,
-        [string]$SocketAddr = '127.0.0.1:19999'
+        [string]$SocketAddr = "$env:TEMP\cak-nonexistent-$PID.sock"
     )
 
     $hookPsi = New-Object System.Diagnostics.ProcessStartInfo

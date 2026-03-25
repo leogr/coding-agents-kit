@@ -28,7 +28,7 @@ $StdoutForwarder = Join-Path $RootDir 'tools\stdout-forwarder\target\release\std
 # Use a test-specific temp directory
 $E2eDir = Join-Path $RootDir "build\e2e-$PID"
 New-Item -ItemType Directory -Force -Path $E2eDir | Out-Null
-$BrokerAddr = '127.0.0.1:2803'
+$BrokerSock = Join-Path $E2eDir 'broker.sock'
 $HttpPort = 19000 + ($PID % 1000)
 $FalcoLog = Join-Path $E2eDir 'falco-stdout.log'
 $PASS = 0
@@ -132,7 +132,7 @@ plugins:
   - name: coding_agent
     library_path: coding_agent_plugin.dll
     init_config:
-      socket_path: "$BrokerAddr"
+      socket_path: "$($BrokerSock -replace '\\', '/')"
       http_port: $HttpPort
       mode: $Mode
 load_plugins:
@@ -169,24 +169,16 @@ syslog_output:
     $psi.WorkingDirectory = $FalcoDir
     $script:falcoProcess = [System.Diagnostics.Process]::Start($psi)
 
-    # Wait for broker TCP port to be listening
+    # Wait for broker Unix socket to appear
     $retries = 0
     while ($retries -lt 40) {
-        try {
-            $tcp = New-Object System.Net.Sockets.TcpClient
-            $tcp.Connect('127.0.0.1', 2803)
-            $tcp.Close()
-            break
-        } catch {
-            Start-Sleep -Milliseconds 250
-            $retries++
-        }
+        if (Test-Path $BrokerSock) { break }
+        Start-Sleep -Milliseconds 250
+        $retries++
     }
 
     if ($retries -ge 40) {
-        Write-Host "ERROR: Falco broker did not start (TCP 2803 not listening)"
-        $stderr = $script:falcoProcess.StandardError.ReadToEnd()
-        Write-Host "Falco stderr: $stderr"
+        Write-Host "ERROR: Falco broker did not start (socket not found: $BrokerSock)"
         return $false
     }
 
@@ -205,7 +197,7 @@ function Run-Hook {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
-    $psi.EnvironmentVariables['CODING_AGENTS_KIT_SOCKET'] = $BrokerAddr
+    $psi.EnvironmentVariables['CODING_AGENTS_KIT_SOCKET'] = $BrokerSock
     $psi.EnvironmentVariables['CODING_AGENTS_KIT_TIMEOUT_MS'] = '8000'
 
     $proc = [System.Diagnostics.Process]::Start($psi)
@@ -270,7 +262,7 @@ if (-not $ok) {
     Cleanup
     exit 1
 }
-Write-Host "Falco running (broker=$BrokerAddr, http=$HttpPort)"
+Write-Host "Falco running (broker=$BrokerSock, http=$HttpPort)"
 Write-Host ""
 
 # ===================================================================
