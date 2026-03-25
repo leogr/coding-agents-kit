@@ -19,6 +19,9 @@ $RootDir = Split-Path -Parent $ScriptDir
 $Hook = Join-Path $RootDir 'hooks\claude-code\target\release\claude-interceptor.exe'
 $PluginDll = Join-Path $RootDir 'plugins\coding-agent-plugin\target\release\coding_agent_plugin.dll'
 $FalcoExe = Join-Path $RootDir 'build\falco-0.43.0-windows-arm64\falco.exe'
+if (-not (Test-Path $FalcoExe)) {
+    $FalcoExe = Join-Path $RootDir 'build\falco-0.43.0-windows-x64\falco.exe'
+}
 $FalcoDir = Split-Path $FalcoExe -Parent
 $StdoutForwarder = Join-Path $RootDir 'tools\stdout-forwarder\target\release\stdout-forwarder.exe'
 
@@ -111,14 +114,16 @@ function Start-Falco {
         try { $script:falcoProcess.Kill() } catch {}
     }
 
-    # Copy plugin DLL and stdout-forwarder next to falco.exe
+    # Copy plugin DLL next to falco.exe
     Copy-Item $PluginDll "$FalcoDir\coding_agent_plugin.dll" -Force -ErrorAction SilentlyContinue
-    Copy-Item $StdoutForwarder "$FalcoDir\stdout-forwarder.exe" -Force -ErrorAction SilentlyContinue
 
     $denyRules = (Join-Path $RulesDir 'deny.yaml') -replace '\\', '/'
     $seenRules = (Join-Path $RulesDir 'seen.yaml') -replace '\\', '/'
 
-    # Write full YAML config (avoids -o quoting issues on Windows)
+    # Copy stdout-forwarder next to falco.exe
+    Copy-Item $StdoutForwarder "$FalcoDir\stdout-forwarder.exe" -Force -ErrorAction SilentlyContinue
+
+    # Write YAML config with stdout_output (forwarder bridges to HTTP server)
     $falcoConfig = Join-Path $E2eDir 'falco.yaml'
     @"
 engine:
@@ -148,7 +153,7 @@ syslog_output:
   enabled: false
 "@ | Set-Content $falcoConfig -Encoding UTF8
 
-    # Launch: falco -U | stdout-forwarder (via batch file for piping)
+    # Launch: falco -U | stdout-forwarder (batch file for piping)
     $batchFile = Join-Path $E2eDir 'run-falco.cmd'
     @"
 @echo off

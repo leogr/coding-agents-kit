@@ -2,33 +2,19 @@
 
 ## Architecture
 
-x86_64 (AMD64) builds are the recommended target. They run natively on x86_64 Windows and via emulation on ARM64 Windows 11 — no separate ARM64 build is needed.
+All Windows builds target **x86_64 (AMD64)**. x64 binaries run natively on x64 Windows and via emulation on ARM64 Windows 11 — no separate ARM64 build is needed.
+
+The Windows port uses the same Falco plugin architecture as Linux/macOS with two adaptations:
+- **IPC**: TCP on `127.0.0.1:2803` instead of Unix domain sockets (Rust's `std::os::unix::net` is not available on Windows)
+- **Alert delivery**: Falco writes JSON alerts to stdout, and a lightweight `stdout-forwarder` binary pipes each line to the plugin's HTTP server via TCP. This replaces Falco's `http_output` which requires curl/OpenSSL dependencies. The pipeline is: `falco.exe -U ... | stdout-forwarder.exe http://127.0.0.1:2802`
+
+> **Note**: The `http_output` patch and build support are included (`falco-windows-http-output.patch`) for native x64 Windows machines where curl/OpenSSL are available. On ARM64 Windows running x64 via emulation, the stdout-forwarder is more reliable.
 
 ## Prerequisites
 
-### Required
+Install the following in order. All commands should be run from PowerShell.
 
-| Tool | Version | Purpose | Install |
-|------|---------|---------|---------|
-| **Rust** | 1.80+ | Compile interceptor, plugin DLL, ctl, forwarder | [rustup.rs](https://rustup.rs/) |
-| **Visual Studio** | 2022+ | MSVC compiler, Windows SDK, CMake | [visualstudio.microsoft.com](https://visualstudio.microsoft.com/) |
-| **CMake** | 3.24+ | Build Falco from source | Included with VS C++ CMake tools |
-| **Git** | any | Clone Falco source, apply patches | [git-scm.com](https://git-scm.com/download/win) |
-| **.NET Runtime** | 8.0+ | Required by WiX Toolset | `winget install Microsoft.DotNet.Runtime.9` |
-| **WiX Toolset** | v4 | Build MSI installer | `dotnet tool install --global wix` |
-
-### Install Rust
-
-```powershell
-# Download and run (works on both x64 and ARM64)
-Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
-.\rustup-init.exe -y
-# Restart your shell, then verify:
-rustc --version
-cargo --version
-```
-
-### Install Visual Studio Build Tools
+### 1. Visual Studio Build Tools
 
 Install [Visual Studio 2022+](https://visualstudio.microsoft.com/) (Community is free) with:
 - **Desktop development with C++** workload
@@ -36,24 +22,45 @@ Install [Visual Studio 2022+](https://visualstudio.microsoft.com/) (Community is
   - Windows SDK (10.0 or later)
   - C++ CMake tools for Windows
 
-Verify: open "Developer Command Prompt for VS" and run `cl`.
+Verify:
+```powershell
+# Open "Developer Command Prompt for VS" and run:
+cl
+cmake --version   # requires 3.24+
+```
 
-### Install WiX
+### 2. Git
+
+Install [Git for Windows](https://git-scm.com/download/win).
 
 ```powershell
-# .NET runtime (if not installed)
-winget install Microsoft.DotNet.Runtime.9
+git --version
+```
 
-# WiX Toolset v4
+### 3. Rust
+
+```powershell
+Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+.\rustup-init.exe -y
+# Restart your shell, then:
+rustc --version    # requires 1.80+
+cargo --version
+
+# Add x64 target (needed if building on ARM64 Windows)
+rustup target add x86_64-pc-windows-msvc
+```
+
+### 4. .NET Runtime + WiX Toolset (for MSI packaging)
+
+```powershell
+winget install Microsoft.DotNet.Runtime.9 --accept-package-agreements --accept-source-agreements
 dotnet tool install --global wix
-
-# Verify
 wix --version
 ```
 
 ## Building
 
-### Quick Build (all components)
+### Quick Build (all components + MSI)
 
 ```powershell
 # From the repository root:
@@ -61,27 +68,26 @@ powershell -File installers\windows\package.ps1 -Version 0.1.0
 ```
 
 This single command:
-1. Compiles all Rust crates (interceptor, plugin, ctl, stdout-forwarder)
-2. Builds Falco 0.43.0 from source (cached after first build)
+1. Compiles all Rust crates for x64 (interceptor, plugin DLL, ctl, stdout-forwarder)
+2. Clones and builds Falco 0.43.0 from source with `http_output` (~10 min, cached)
 3. Patches `falco.exe` plugin search path
-4. Stages all files
-5. Produces the MSI installer
+4. Stages all files and produces the MSI installer
 
 Output: `build/out/coding-agents-kit-0.1.0-windows-x64.msi`
 
 ### Step-by-Step Build
 
 ```powershell
-# 1. Build Rust crates
-cd hooks\claude-code && cargo build --release && cd ..\..
-cd plugins\coding-agent-plugin && cargo build --release && cd ..\..
-cd tools\coding-agents-kit-ctl && cargo build --release && cd ..\..
-cd tools\stdout-forwarder && cargo build --release && cd ..\..
+# 1. Build Rust crates (targets x64)
+cd hooks\claude-code && cargo build --release --target x86_64-pc-windows-msvc && cd ..\..
+cd plugins\coding-agent-plugin && cargo build --release --target x86_64-pc-windows-msvc && cd ..\..
+cd tools\coding-agents-kit-ctl && cargo build --release --target x86_64-pc-windows-msvc && cd ..\..
+cd tools\stdout-forwarder && cargo build --release --target x86_64-pc-windows-msvc && cd ..\..
 
-# 2. Build Falco from source (~10 minutes, cached)
-powershell -File installers\windows\build-falco.ps1
+# 2. Build Falco from source (~10 minutes first time, cached after)
+powershell -File installers\windows\build-falco.ps1 -Arch x64
 
-# 3. Build MSI (uses pre-built components)
+# 3. Package MSI (uses pre-built components)
 powershell -File installers\windows\package.ps1 -Version 0.1.0 -SkipRustBuild -SkipFalcoBuild
 ```
 
@@ -98,7 +104,7 @@ powershell -File installers\windows\package.ps1 -Version 0.1.0 -SkipRustBuild -S
 ## Installing
 
 ```powershell
-# Install (deploys files to %LOCALAPPDATA%\coding-agents-kit\)
+# Install (deploys files + runs postinstall setup)
 powershell -File build\out\Install-CodingAgentsKit.ps1
 
 # Or manual MSI + postinstall:
@@ -126,33 +132,18 @@ powershell -File build\out\Uninstall-CodingAgentsKit.ps1
 # Interceptor tests (17 test cases, no Falco needed)
 powershell -File tests\test_interceptor_windows.ps1
 
-# End-to-end tests (10 test cases, requires built Falco + plugin)
+# End-to-end tests (requires built Falco + plugin)
 powershell -File tests\test_e2e_windows.ps1
 ```
 
-## Windows Architecture
-
-The Windows port uses the same Falco plugin architecture as Linux/macOS with two adaptations:
-
-1. **IPC**: TCP on `127.0.0.1:2803` instead of Unix domain sockets (Rust's `std::os::unix::net` is not available on Windows).
-
-2. **Alert delivery**: Falco's `http_output` requires curl, which is not currently enabled in the Windows MINIMAL_BUILD. Curl's bundled autotools build fails on ARM64 Windows; system OpenSSL is available (`winget install ShiningLight.OpenSSL.Dev`) but a matching curl development package has not been tested yet. As a workaround, Falco writes JSON alerts to stdout, and a lightweight `stdout-forwarder` binary pipes each line to the plugin's HTTP server via localhost:
-
-```
-falco.exe -U ... | stdout-forwarder.exe http://127.0.0.1:2802
-```
-
-> **Future improvement**: Enabling `http_output` natively (by providing system curl libraries or using x64 builds where autotools works) would eliminate the need for the stdout-forwarder. The `falco-windows-http-output.patch` is already prepared for this.
-
-### Directory Layout (installed)
+## Directory Layout (installed)
 
 ```
 %LOCALAPPDATA%\coding-agents-kit\
 ├── bin\
-│   ├── falco.exe                          # Falco rule engine
+│   ├── falco.exe                          # Falco rule engine (x64)
 │   ├── claude-interceptor.exe             # Claude Code hook
 │   ├── coding-agents-kit-ctl.exe          # Service management CLI
-│   ├── stdout-forwarder.exe               # Alert bridge (stdout → HTTP)
 │   └── coding-agents-kit-launcher.ps1     # Service launcher
 ├── share\
 │   └── coding_agent_plugin.dll            # Falco plugin (source + extract)
@@ -172,10 +163,10 @@ falco.exe -U ... | stdout-forwarder.exe http://127.0.0.1:2802
 
 ## Known Caveats
 
-- **Git Bash PATH shadowing**: Git Bash's `/usr/bin/tar` misinterprets Windows paths with `C:` as a remote host. The build scripts prepend `C:\Windows\System32` to PATH so Windows native `tar.exe` is used. If running build scripts manually from Git Bash, use the wrapper: `powershell -File <script>`.
+- **Git Bash PATH shadowing**: Git Bash's `/usr/bin/tar` misinterprets Windows paths with `C:` as a remote host. The build scripts prepend `C:\Windows\System32` to PATH so Windows native `tar.exe` is used. If running build scripts manually from Git Bash, use: `powershell -File <script>`.
 
 - **Falco patches**: Patch files must be normalized from CRLF to LF before `git apply`. The `build-falco.ps1` script handles this automatically.
 
-- **Falco launched from Git Bash**: Falco may segfault when launched directly from Git Bash due to stdin/stdout handling differences. Always launch via PowerShell's `Process::Start` or `cmd.exe`. The test scripts and launcher handle this correctly.
+- **Falco launched from Git Bash**: Falco may segfault when launched directly from Git Bash due to stdin/stdout handling differences. Always launch via PowerShell or `cmd.exe`. The test scripts and launcher handle this correctly.
 
 - **Path separators in rules**: The plugin normalizes all `real_file_path` and `real_cwd` fields to forward slashes (`C:/Users/...`), so Falco rules should use forward slashes for `startswith` and `contains` comparisons.
