@@ -26,8 +26,10 @@ index 5ae5b83..a1b2c3d 100644
 +# HTTP output on Windows (coding-agents-kit)
 +if(WIN32)
 +	target_sources(falco_application PRIVATE outputs_http.cpp)
-+	list(APPEND FALCO_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}")
++	list(APPEND FALCO_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}" "${CURL_INCLUDE_DIR}")
 +	list(APPEND FALCO_LIBRARIES "${CURL_LIBRARIES}" "${OPENSSL_LIBRARIES}")
++	# curl with SChannel requires these Windows system libraries
++	list(APPEND FALCO_LIBRARIES crypt32 secur32 iphlpapi)
 +	if(USE_BUNDLED_CURL)
 +		list(APPEND FALCO_DEPENDENCIES curl)
 +	endif()

@@ -102,12 +102,8 @@ if (-not (Test-Path (Join-Path $SrcDir 'CMakeLists.txt'))) {
 # ---------------------------------------------------------------------------
 
 $PatchDir = $ScriptDir  # patches are alongside this script
-# NOTE: http_output patch is not applied because curl's bundled autotools build
-# fails on ARM64 Windows. System OpenSSL is available (winget install
-# ShiningLight.OpenSSL.Dev) but a system curl dev package has not been tested.
-# Instead, Windows uses stdout_output with a forwarder. The http_output patch
-# (falco-windows-http-output.patch) is kept for future use.
 $patches = @(
+    (Join-Path $PatchDir 'falco-windows-http-output.patch'),
     (Join-Path $PatchDir 'falco-flush-stdout.patch')
 )
 
@@ -168,8 +164,9 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $OpenSSLRoot = ''
 foreach ($candidate in @(
     "$env:OPENSSL_ROOT_DIR",
-    'C:\Program Files\OpenSSL-Win64-ARM',
+    'C:\Program Files\FireDaemon OpenSSL 3',
     'C:\Program Files\OpenSSL-Win64',
+    'C:\Program Files\OpenSSL-Win64-ARM',
     'C:\Program Files\OpenSSL'
 )) {
     if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path (Join-Path $candidate 'include\openssl\ssl.h'))) {
@@ -185,6 +182,27 @@ if ([string]::IsNullOrWhiteSpace($OpenSSLRoot)) {
 }
 Write-Host "OpenSSL: $OpenSSLRoot"
 
+# Find curl (from vcpkg or system)
+$CurlRoot = ''
+foreach ($candidate in @(
+    "$env:CURL_ROOT_DIR",
+    "$env:VCPKG_ROOT\installed\x64-windows-static",
+    "$env:USERPROFILE\vcpkg\installed\x64-windows-static",
+    'C:\vcpkg\installed\x64-windows-static'
+)) {
+    if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path (Join-Path $candidate 'include\curl\curl.h'))) {
+        $CurlRoot = $candidate
+        break
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($CurlRoot)) {
+    Write-Host "WARNING: curl not found. http_output will not be available."
+    Write-Host "  Install curl: vcpkg install curl:x64-windows-static"
+    $CurlRoot = 'NOTFOUND'
+}
+Write-Host "curl: $CurlRoot"
+
 Write-Host "=== Building Falco $Version ($Arch) ==="
 
 $cmdPath = Join-Path $BuildDir 'build-falco.cmd'
@@ -196,6 +214,12 @@ if %ERRORLEVEL% neq 0 exit /b 1
 
 "$CMake" -S "$SrcDir" -B "$BuildDir" -G "NMake Makefiles" ^
     -DUSE_BUNDLED_DEPS=ON ^
+    -DUSE_BUNDLED_OPENSSL=OFF ^
+    -DOPENSSL_ROOT_DIR="$OpenSSLRoot" ^
+    -DOPENSSL_INCLUDE_DIR="$OpenSSLRoot\include" ^
+    -DUSE_BUNDLED_CURL=OFF ^
+    -DCURL_INCLUDE_DIR="$CurlRoot\include" ^
+    -DCURL_LIBRARY="$CurlRoot\lib\libcurl.lib" ^
     -DMINIMAL_BUILD=ON ^
     -DBUILD_FALCO_MODERN_BPF=OFF ^
     -DBUILD_WARNINGS_AS_ERRORS=OFF ^
