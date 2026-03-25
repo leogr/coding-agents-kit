@@ -19,6 +19,9 @@ tiny_http = "0.12"
 anyhow = "1"
 log = "0.4"
 
+[target.'cfg(windows)'.dependencies]
+uds_windows = "1.2"
+
 [profile.release]
 opt-level = 2
 lto = true

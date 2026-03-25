@@ -48,7 +48,11 @@ fn default_socket_path() -> String {
     }
     #[cfg(windows)]
     {
-        "127.0.0.1:2803".to_string()
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            format!("{profile}\\.coding-agents-kit\\run\\broker.sock")
+        } else {
+            "\\\\.\\pipe\\coding-agents-kit-broker.sock".to_string()
+        }
     }
 }
 

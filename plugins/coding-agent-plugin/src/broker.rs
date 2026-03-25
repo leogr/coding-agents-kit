@@ -5,10 +5,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Cross-platform stream type for interceptor connections.
+/// Uses Unix domain sockets on all platforms (Windows 10+ supports AF_UNIX).
 #[cfg(unix)]
 pub type BrokerStream = std::os::unix::net::UnixStream;
 #[cfg(windows)]
-pub type BrokerStream = std::net::TcpStream;
+pub type BrokerStream = uds_windows::UnixStream;
 
 use dashmap::DashMap;
 

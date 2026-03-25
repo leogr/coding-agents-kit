@@ -69,16 +69,24 @@ fn run_server(socket_path: &str, event_tx: &Sender<EventData>, broker: &Broker) 
 }
 
 #[cfg(windows)]
-fn run_server(listen_addr: &str, event_tx: &Sender<EventData>, broker: &Broker) {
-    let listener = match std::net::TcpListener::bind(listen_addr) {
+fn run_server(socket_path: &str, event_tx: &Sender<EventData>, broker: &Broker) {
+    // Remove stale socket file if it exists.
+    let _ = std::fs::remove_file(socket_path);
+
+    // Ensure parent directory exists.
+    if let Some(parent) = std::path::Path::new(socket_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let listener = match uds_windows::UnixListener::bind(socket_path) {
         Ok(l) => l,
         Err(e) => {
-            log::error!("failed to bind TCP listener at {}: {}", listen_addr, e);
+            log::error!("failed to bind Unix socket at {}: {}", socket_path, e);
             return;
         }
     };
 
-    log::info!("broker listening on {}", listen_addr);
+    log::info!("broker listening on {}", socket_path);
 
     for conn in listener.incoming() {
         let stream = match conn {

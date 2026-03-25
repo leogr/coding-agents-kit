@@ -86,7 +86,7 @@ const TIMEOUT_MAX_MS: u64 = 30000;
 #[cfg(unix)]
 const SOCKET_SUFFIX: &str = "/.coding-agents-kit/run/broker.sock";
 #[cfg(windows)]
-const DEFAULT_BROKER_ADDRESS: &str = "127.0.0.1:2803";
+const SOCKET_SUFFIX: &str = "\\.coding-agents-kit\\run\\broker.sock";
 const INPUT_MAX: usize = 64 * 1024;
 const RESPONSE_MAX: u64 = 64 * 1024;
 
@@ -156,7 +156,11 @@ fn get_socket_path() -> String {
     }
     #[cfg(windows)]
     {
-        DEFAULT_BROKER_ADDRESS.to_string()
+        let home = env::var("USERPROFILE").unwrap_or_default();
+        if home.is_empty() {
+            return String::new();
+        }
+        format!("{home}{SOCKET_SUFFIX}")
     }
 }
 
@@ -189,7 +193,7 @@ fn communicate(socket_path: &str, request: &[u8], timeout: Duration) -> Result<R
     let stream = std::os::unix::net::UnixStream::connect(socket_path)
         .map_err(|e| format!("broker unavailable: {e}"))?;
     #[cfg(windows)]
-    let stream = std::net::TcpStream::connect(socket_path)
+    let stream = uds_windows::UnixStream::connect(socket_path)
         .map_err(|e| format!("broker unavailable: {e}"))?;
 
     // Send request.
