@@ -37,10 +37,13 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent (Split-Path -Parent $ScriptDir)
 $BuildDir = Join-Path $RootDir 'build'
 
-# Detect native architecture
+# Detect native architecture. PROCESSOR_ARCHITECTURE can lie when running under
+# x64 emulation on ARM64 (returns AMD64 instead of ARM64). Check the registry
+# for the true hardware architecture.
 if ([string]::IsNullOrWhiteSpace($Arch)) {
-    $nativeArch = $env:PROCESSOR_ARCHITECTURE
-    switch ($nativeArch) {
+    $hwArch = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -Name PROCESSOR_ARCHITECTURE -ErrorAction SilentlyContinue).PROCESSOR_ARCHITECTURE
+    if (-not $hwArch) { $hwArch = $env:PROCESSOR_ARCHITECTURE }
+    switch ($hwArch) {
         'AMD64' { $Arch = 'x64' }
         'ARM64' { $Arch = 'arm64' }
         default { $Arch = 'x64' }

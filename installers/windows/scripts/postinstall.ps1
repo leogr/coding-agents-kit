@@ -65,10 +65,10 @@ $pluginYaml = @"
 # coding-agents-kit plugin configuration (Windows, auto-generated)
 plugins:
   - name: coding_agent
-    library_path: $($ShareDir -replace '\\', '/')/coding_agent_plugin.dll
+    library_path: ../share/coding_agent_plugin.dll
     init_config:
       mode: enforcement
-      socket_path: "127.0.0.1:2803"
+      socket_path: "$($Prefix -replace '\\', '/')/run/broker.sock"
       http_port: 2802
 
 load_plugins:
@@ -94,7 +94,10 @@ Write-Host "Generated falco.coding_agents_plugin.yaml"
 
 $ctlExe = Join-Path $BinDir 'coding-agents-kit-ctl.exe'
 if (Test-Path $ctlExe) {
-    & $ctlExe hook add
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $ctlExe hook add 2>&1 | ForEach-Object { Write-Host $_ }
+    $ErrorActionPreference = $prevPref
 }
 
 # ---------------------------------------------------------------------------

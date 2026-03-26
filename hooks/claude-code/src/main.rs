@@ -86,7 +86,7 @@ const TIMEOUT_MAX_MS: u64 = 30000;
 #[cfg(unix)]
 const SOCKET_SUFFIX: &str = "/.coding-agents-kit/run/broker.sock";
 #[cfg(windows)]
-const SOCKET_SUFFIX: &str = "\\.coding-agents-kit\\run\\broker.sock";
+const SOCKET_SUFFIX: &str = "/.coding-agents-kit/run/broker.sock";
 const INPUT_MAX: usize = 64 * 1024;
 const RESPONSE_MAX: u64 = 64 * 1024;
 
@@ -160,7 +160,9 @@ fn get_socket_path() -> String {
         if home.is_empty() {
             return String::new();
         }
-        format!("{home}{SOCKET_SUFFIX}")
+        // Use forward slashes to match the Falco plugin config (YAML backslashes
+        // are escape sequences, so configs use forward slashes on Windows).
+        format!("{}{SOCKET_SUFFIX}", home.replace('\\', "/"))
     }
 }
 

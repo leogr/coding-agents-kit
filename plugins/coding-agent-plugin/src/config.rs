@@ -49,9 +49,9 @@ fn default_socket_path() -> String {
     #[cfg(windows)]
     {
         if let Ok(profile) = std::env::var("USERPROFILE") {
-            format!("{profile}\\.coding-agents-kit\\run\\broker.sock")
+            format!("{}/.coding-agents-kit/run/broker.sock", profile.replace('\\', "/"))
         } else {
-            "\\\\.\\pipe\\coding-agents-kit-broker.sock".to_string()
+            "C:/coding-agents-kit-broker.sock".to_string()
         }
     }
 }

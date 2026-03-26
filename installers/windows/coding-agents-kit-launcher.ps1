@@ -34,9 +34,12 @@ if (Test-Path $pluginConfig) {
     }
 }
 
-# Register hook before starting Falco
+# Register hook before starting Falco (suppress stderr to avoid ErrorActionPreference=Stop)
 if (Test-Path $CtlExe) {
-    & $CtlExe hook add 2>$null
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $CtlExe hook add 2>&1 | Out-Null
+    $ErrorActionPreference = $prevPref
 }
 
 # Write a batch file for the pipeline (falco | stdout-forwarder)
@@ -67,8 +70,9 @@ finally {
         & taskkill /F /T /PID $pipelineProcess.Id 2>$null
     }
 
-    # Remove hook
+    # Remove hook (suppress errors)
     if (Test-Path $CtlExe) {
-        & $CtlExe hook remove 2>$null
+        $ErrorActionPreference = 'Continue'
+        & $CtlExe hook remove 2>&1 | Out-Null
     }
 }
