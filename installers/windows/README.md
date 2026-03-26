@@ -2,11 +2,68 @@
 
 ## Architecture
 
+### Platform
+
 All Windows builds target **x86_64 (AMD64)**. x64 binaries run natively on x64 Windows and via emulation on ARM64 Windows 11 — no separate ARM64 build is needed.
 
-The Windows port uses the same Falco plugin architecture as Linux/macOS with two adaptations:
-- **IPC**: TCP on `127.0.0.1:2803` instead of Unix domain sockets (Rust's `std::os::unix::net` is not available on Windows)
-- **Alert delivery**: Falco writes JSON alerts to stdout, and a lightweight `stdout-forwarder` binary (177KB) pipes each line to the plugin's HTTP server via TCP: `falco.exe -U ... | stdout-forwarder.exe http://127.0.0.1:2802`. This is required because Falco's built-in `http_output` (curl-based) does not reliably POST to localhost on Windows.
+### Pipeline
+
+The Windows port uses the same Falco plugin architecture as Linux/macOS:
+
+```
+Claude Code
+    │  PreToolUse hook
+    ▼
+claude-interceptor.exe ──Unix socket──▶ Plugin broker (in Falco)
+                                              │
+                                              ▼
+                                       Falco rule engine
+                                              │
+                                         ┌────┴────┐
+                                    Linux/macOS   Windows
+                                         │         │
+                                   http_output   stdout
+                                         │         │
+                                         ▼         ▼
+                                   Plugin HTTP  stdout-forwarder.exe
+                                    server          │
+                                         ▲         POST
+                                         │         │
+                                         └────┬────┘
+                                              ▼
+                                       Verdict resolution
+                                              │
+                                              ▼
+                                   Response to interceptor
+```
+
+| Component | Linux/macOS | Windows |
+|-----------|------------|---------|
+| Interceptor → broker | Unix domain socket | Unix domain socket (via `uds_windows` crate) |
+| Broker | Embedded in plugin | Embedded in plugin |
+| Plugin | .so / .dylib loaded by Falco | .dll loaded by Falco |
+| Alert delivery | Falco `http_output` (curl) → plugin HTTP server | Falco stdout → `stdout-forwarder` → plugin HTTP server |
+| Processes | 1 (Falco) | 2 (Falco + stdout-forwarder) |
+
+### Why the stdout-forwarder is needed
+
+On Linux/macOS, Falco delivers alerts to the plugin's HTTP server using its built-in `http_output`, which uses libcurl to POST to `http://127.0.0.1:<port>`. This is intra-process communication — both Falco and the plugin run in the same process.
+
+On Windows, `http_output` compiles successfully (with system OpenSSL + vcpkg curl) and Falco initializes it without errors. However, **curl silently fails to deliver alerts to localhost**. The root cause is likely curl's interaction with Windows SChannel and/or proxy detection — even for plain HTTP to 127.0.0.1, curl on Windows performs DNS resolution, proxy detection, and SChannel initialization, any of which can hang or fail silently.
+
+The `stdout-forwarder` is a tiny (177KB) Rust binary that bypasses curl entirely. It reads JSON lines from Falco's stdout pipe and POSTs each to the plugin's HTTP server using raw TCP sockets — no curl, no TLS stack, no proxy detection:
+
+```
+falco.exe -U -c config.yaml | stdout-forwarder.exe http://127.0.0.1:2802
+```
+
+This approach is reliable because:
+- Raw TCP to localhost is the simplest possible network operation
+- The pipe keeps Falco's stdout flowing (prevents output thread deadlock)
+- The forwarder is stateless — each alert is an independent HTTP POST
+- No external dependencies (pure Rust, standard library only)
+
+> **Note**: The `http_output` patch (`falco-windows-http-output.patch`) and build support are maintained in the repo. If the curl/localhost issue is resolved in the future (or on native x64 machines where curl may behave differently), `http_output` can replace the forwarder for full parity with Linux/macOS. Both can coexist without conflicts.
 
 ## Prerequisites
 
