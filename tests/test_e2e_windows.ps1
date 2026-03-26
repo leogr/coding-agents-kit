@@ -16,14 +16,35 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
-$Hook = Join-Path $RootDir 'hooks\claude-code\target\release\claude-interceptor.exe'
-$PluginDll = Join-Path $RootDir 'plugins\coding-agent-plugin\target\release\coding_agent_plugin.dll'
-$FalcoExe = Join-Path $RootDir 'build\falco-0.43.0-windows-arm64\falco.exe'
-if (-not (Test-Path $FalcoExe)) {
-    $FalcoExe = Join-Path $RootDir 'build\falco-0.43.0-windows-x64\falco.exe'
+
+# Helper: find a built artifact across native and cross-compiled target dirs
+function Find-Built([string]$Base, [string]$File) {
+    foreach ($c in @(
+        (Join-Path $Base "target\release\$File"),
+        (Join-Path $Base "target\x86_64-pc-windows-msvc\release\$File"),
+        (Join-Path $Base "target\aarch64-pc-windows-msvc\release\$File")
+    )) {
+        if (Test-Path $c) { return $c }
+    }
+    return (Join-Path $Base "target\release\$File")  # fallback for error message
 }
+
+$Hook = Find-Built (Join-Path $RootDir 'hooks\claude-code') 'claude-interceptor.exe'
+$PluginDll = Find-Built (Join-Path $RootDir 'plugins\coding-agent-plugin') 'coding_agent_plugin.dll'
+$StdoutForwarder = Find-Built (Join-Path $RootDir 'tools\stdout-forwarder') 'stdout-forwarder.exe'
+
+# Find Falco: prefer staged (patched) binary, fall back to raw build
+$FalcoExe = $null
+foreach ($candidate in @(
+    (Join-Path $RootDir 'build\stage-windows-arm64\bin\falco.exe'),
+    (Join-Path $RootDir 'build\stage-windows-x64\bin\falco.exe'),
+    (Join-Path $RootDir 'build\falco-0.43.0-windows-arm64\falco.exe'),
+    (Join-Path $RootDir 'build\falco-0.43.0-windows-x64\falco.exe')
+)) {
+    if (Test-Path $candidate) { $FalcoExe = $candidate; break }
+}
+if (-not $FalcoExe) { $FalcoExe = Join-Path $RootDir 'build\falco-0.43.0-windows-x64\falco.exe' }
 $FalcoDir = Split-Path $FalcoExe -Parent
-$StdoutForwarder = Join-Path $RootDir 'tools\stdout-forwarder\target\release\stdout-forwarder.exe'
 
 # Use a test-specific temp directory
 $E2eDir = Join-Path $RootDir "build\e2e-$PID"

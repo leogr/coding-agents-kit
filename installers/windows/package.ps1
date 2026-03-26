@@ -89,23 +89,25 @@ if (-not $SkipRustBuild) {
     $cargo = Get-Command cargo -ErrorAction SilentlyContinue
     if (-not $cargo) { throw 'cargo not found. Install Rust toolchain.' }
 
-    # Ensure target is installed
+    # Ensure target is installed (rustup writes info to stderr, suppress errors)
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     & rustup target add $RustTarget 2>&1 | Out-Null
+    $ErrorActionPreference = $prevPref
 
-    Push-Location (Join-Path $RootDir 'hooks\claude-code')
-    & cargo build --release --target $RustTarget
-    if ($LASTEXITCODE -ne 0) { throw 'Interceptor build failed.' }
-    Pop-Location
-
-    Push-Location (Join-Path $RootDir 'plugins\coding-agent-plugin')
-    & cargo build --release --target $RustTarget
-    if ($LASTEXITCODE -ne 0) { throw 'Plugin build failed.' }
-    Pop-Location
-
-    Push-Location (Join-Path $RootDir 'tools\coding-agents-kit-ctl')
-    & cargo build --release --target $RustTarget
-    if ($LASTEXITCODE -ne 0) { throw 'CTL tool build failed.' }
-    Pop-Location
+    $crates = @(
+        @{ Path = 'hooks\claude-code';              Name = 'Interceptor' },
+        @{ Path = 'plugins\coding-agent-plugin';    Name = 'Plugin' },
+        @{ Path = 'tools\coding-agents-kit-ctl';    Name = 'CTL tool' },
+        @{ Path = 'tools\stdout-forwarder';         Name = 'stdout-forwarder' }
+    )
+    foreach ($crate in $crates) {
+        Write-Host "  Building $($crate.Name)..."
+        Push-Location (Join-Path $RootDir $crate.Path)
+        & cargo build --release --target $RustTarget
+        if ($LASTEXITCODE -ne 0) { throw "$($crate.Name) build failed." }
+        Pop-Location
+    }
 }
 
 # ---------------------------------------------------------------------------

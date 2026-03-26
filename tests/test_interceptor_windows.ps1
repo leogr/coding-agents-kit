@@ -12,12 +12,19 @@ $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
-$Hook = Join-Path $RootDir 'hooks\claude-code\target\release\claude-interceptor.exe'
 $MockBroker = Join-Path $ScriptDir 'mock_broker_uds.ps1'
 
-# Check prerequisites
-if (-not (Test-Path $Hook)) {
-    Write-Error "Interceptor not found at $Hook. Build with: cargo build --release"
+# Find interceptor binary (supports native and cross-compiled targets)
+$Hook = $null
+foreach ($candidate in @(
+    (Join-Path $RootDir 'hooks\claude-code\target\release\claude-interceptor.exe'),
+    (Join-Path $RootDir 'hooks\claude-code\target\x86_64-pc-windows-msvc\release\claude-interceptor.exe'),
+    (Join-Path $RootDir 'hooks\claude-code\target\aarch64-pc-windows-msvc\release\claude-interceptor.exe')
+)) {
+    if (Test-Path $candidate) { $Hook = $candidate; break }
+}
+if (-not $Hook) {
+    Write-Error "Interceptor not found. Build with: cargo build --release"
     exit 1
 }
 
