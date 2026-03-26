@@ -152,13 +152,13 @@ Register this repository as a Claude Code Plugin marketplace:
 Then install the skill directly:
 
 ```
-/plugin install coding-agents-falco-rules@leogr/coding-agents-kit-skills
+/plugin install coding-agents-falco-rules@coding-agents-kit-skills
 ```
 
 Or browse and install interactively:
 
 1. Select `Browse and install plugins`
-2. Select `leogr/coding-agents-kit-skills`
+2. Select `coding-agents-kit-skills`
 3. Select `coding-agents-falco-rules`
 4. Select `Install now`
 
