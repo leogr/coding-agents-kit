@@ -114,14 +114,12 @@ New-Item -ItemType Directory -Force -Path $RulesDir | Out-Null
 
 # --- Helpers ---
 $falcoProcess = $null
-$forwarderProcess = $null
 
 function Cleanup {
-    if ($script:forwarderProcess -and -not $script:forwarderProcess.HasExited) {
-        try { $script:forwarderProcess.Kill() } catch {}
-    }
+    # Kill the entire process tree (cmd.exe + falco.exe + stdout-forwarder.exe).
+    # On Windows, killing a parent does NOT kill children — /T is required.
     if ($script:falcoProcess -and -not $script:falcoProcess.HasExited) {
-        try { $script:falcoProcess.Kill() } catch {}
+        & taskkill /F /T /PID $script:falcoProcess.Id 2>$null
     }
     Start-Sleep -Milliseconds 500
     Remove-Item $E2eDir -Recurse -Force -ErrorAction SilentlyContinue
