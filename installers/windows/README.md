@@ -4,7 +4,7 @@
 
 ### Platform
 
-All Windows builds target **x86_64 (AMD64)**. x64 binaries run natively on x64 Windows and via emulation on ARM64 Windows 11 — no separate ARM64 build is needed.
+Builds target the native architecture of the machine. The build scripts auto-detect x86_64 or ARM64 and compile accordingly.
 
 ### Pipeline
 
