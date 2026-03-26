@@ -102,8 +102,11 @@ if (-not (Test-Path (Join-Path $SrcDir 'CMakeLists.txt'))) {
 # ---------------------------------------------------------------------------
 
 $PatchDir = $ScriptDir  # patches are alongside this script
+# Only the stdout flush patch is applied by default. The http_output patch
+# (falco-windows-http-output.patch) is available but not applied because
+# curl's http_output doesn't reliably POST to localhost on Windows.
+# Alert delivery uses stdout-forwarder instead. See README.md for details.
 $patches = @(
-    (Join-Path $PatchDir 'falco-windows-http-output.patch'),
     (Join-Path $PatchDir 'falco-flush-stdout.patch')
 )
 
@@ -157,70 +160,6 @@ $BuildDir = Join-Path $BuildBase "falco-build-$Version-$Arch"
 New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
-# ---------------------------------------------------------------------------
-# Find system OpenSSL (required for http_output)
-# ---------------------------------------------------------------------------
-
-$OpenSSLRoot = ''
-foreach ($candidate in @(
-    "$env:OPENSSL_ROOT_DIR",
-    'C:\Program Files\FireDaemon OpenSSL 3',
-    'C:\Program Files\OpenSSL-Win64',
-    'C:\Program Files\OpenSSL-Win64-ARM',
-    'C:\Program Files\OpenSSL'
-)) {
-    if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path (Join-Path $candidate 'include\openssl\ssl.h'))) {
-        $OpenSSLRoot = $candidate
-        break
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($OpenSSLRoot)) {
-    Write-Host "WARNING: OpenSSL not found. Building without http_output."
-    Write-Host "  Install OpenSSL: winget install ShiningLight.OpenSSL.Dev"
-    $OpenSSLRoot = 'NOTFOUND'
-}
-Write-Host "OpenSSL: $OpenSSLRoot"
-
-# Find curl (from vcpkg or system)
-# Determine vcpkg triplet for the target architecture
-$VcpkgTriplet = if ($Arch -eq 'arm64') { 'arm64-windows-static' } else { 'x64-windows-static' }
-
-$CurlRoot = ''
-foreach ($candidate in @(
-    "$env:CURL_ROOT_DIR",
-    "$env:VCPKG_ROOT\installed\$VcpkgTriplet",
-    "$env:USERPROFILE\vcpkg\installed\$VcpkgTriplet",
-    "C:\vcpkg\installed\$VcpkgTriplet"
-)) {
-    if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path (Join-Path $candidate 'include\curl\curl.h'))) {
-        $CurlRoot = $candidate
-        break
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($CurlRoot)) {
-    Write-Host "WARNING: curl not found. http_output will not be available."
-    Write-Host "  Install curl: vcpkg install curl:x64-windows-static"
-    $CurlRoot = 'NOTFOUND'
-}
-Write-Host "curl: $CurlRoot"
-
-# Resolve OpenSSL library directory (layout varies by installer)
-$OpenSSLLibDir = ''
-foreach ($candidate in @(
-    "$OpenSSLRoot\lib",
-    "$OpenSSLRoot\lib\VC\arm64\MD",
-    "$OpenSSLRoot\lib\VC\x64\MD"
-)) {
-    if (Test-Path (Join-Path $candidate 'libssl.lib')) {
-        $OpenSSLLibDir = $candidate
-        break
-    }
-}
-if ([string]::IsNullOrWhiteSpace($OpenSSLLibDir)) { $OpenSSLLibDir = "$OpenSSLRoot\lib" }
-Write-Host "OpenSSL libs: $OpenSSLLibDir"
-
 Write-Host "=== Building Falco $Version ($Arch) ==="
 
 $cmdPath = Join-Path $BuildDir 'build-falco.cmd'
@@ -232,14 +171,6 @@ if %ERRORLEVEL% neq 0 exit /b 1
 
 "$CMake" -S "$SrcDir" -B "$BuildDir" -G "NMake Makefiles" ^
     -DUSE_BUNDLED_DEPS=ON ^
-    -DUSE_BUNDLED_OPENSSL=OFF ^
-    -DOPENSSL_ROOT_DIR="$OpenSSLRoot" ^
-    -DOPENSSL_INCLUDE_DIR="$OpenSSLRoot\include" ^
-    -DOPENSSL_CRYPTO_LIBRARY="$OpenSSLLibDir\libcrypto.lib" ^
-    -DOPENSSL_SSL_LIBRARY="$OpenSSLLibDir\libssl.lib" ^
-    -DUSE_BUNDLED_CURL=OFF ^
-    -DCURL_INCLUDE_DIR="$CurlRoot\include" ^
-    -DCURL_LIBRARY="$CurlRoot\lib\libcurl.lib" ^
     -DMINIMAL_BUILD=ON ^
     -DBUILD_FALCO_MODERN_BPF=OFF ^
     -DBUILD_WARNINGS_AS_ERRORS=OFF ^

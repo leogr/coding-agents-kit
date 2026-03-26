@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **coding-agents-kit** is a runtime security layer for AI coding agents. It intercepts tool calls (shell commands, file writes, web requests, etc.) before execution, evaluates them against Falco security rules, and enforces allow/deny/ask verdicts in real time. It operates entirely in user space with no elevated privileges.
 
-The initial version targets **Claude Code** on **Linux and macOS**. The architecture is designed to accommodate other coding agents (e.g., Codex) in the future.
+The project targets **Claude Code** on **Linux, macOS, and Windows**. The architecture is designed to accommodate other coding agents (e.g., Codex) in the future.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ The initial version targets **Claude Code** on **Linux and macOS**. The architec
 | **Interceptor** | `hooks/claude-code/` | Rust | Thin passthrough: reads hook JSON from stdin, wraps in envelope, sends to broker, maps verdict to stdout. No content interpretation. |
 | **Plugin** | `plugins/` | Rust (falco_plugin SDK) | Falco source+extract plugin with embedded broker. Parses events, extracts fields, feeds Falco, receives alerts, resolves verdicts. |
 | **Rules** | `rules/` | YAML (Falco rule language) | Vendor and local security policies. |
-| **Installer** | `installers/linux/`, `installers/macos/` | Shell | Platform-specific packaging, installation, hook registration, mode switching. |
+| **Installer** | `installers/linux/`, `installers/macos/`, `installers/windows/` | Shell/PowerShell | Platform-specific packaging, installation, hook registration, mode switching. |
 | **Skills** | `skills/` | Claude Code skill format | Coding agent skills for rule authoring, status, etc. |
 | **Tests** | `tests/` | TBD | Integration and E2E tests. |
 
@@ -283,7 +283,7 @@ The macOS implementation includes `is_service_loaded()` for idempotent start/sto
 
 - **Falco 0.43** — rule engine, running in `nodriver` mode (no kernel instrumentation)
 - **Rust** — interceptor and plugin (using `falco_plugin` crate v0.5.0)
-- **Platforms** — Linux (official Falco builds), macOS (Falco built from source with http_output patch)
+- **Platforms** — Linux (official Falco builds), macOS (Falco built from source with http_output patch), Windows (Falco built from source, alert delivery via stdout-forwarder)
 
 ## Build & Development
 
