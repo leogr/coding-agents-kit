@@ -52,6 +52,7 @@ index 0023756..765f0ab 100644
  #endif
 +#if defined(HAS_HTTP_OUTPUT) && defined(MINIMAL_BUILD)
 +#include "outputs_http.h"
++#include <curl/curl.h>
 +#endif
 
  static const char *s_internal_source = "internal";
@@ -63,6 +64,12 @@ index 0023756..765f0ab 100644
 +#endif
 +#if defined(HAS_HTTP_OUTPUT) && defined(MINIMAL_BUILD)
 +	else if(oc.name == "http") {
++		// curl_global_init is required on Windows (not auto-called thread-safely)
++		static bool curl_initialized = false;
++		if(!curl_initialized) {
++			curl_global_init(CURL_GLOBAL_DEFAULT);
++			curl_initialized = true;
++		}
 +		oo = std::make_unique<falco::outputs::output_http>();
 +	}
  #endif

@@ -6,9 +6,7 @@ All Windows builds target **x86_64 (AMD64)**. x64 binaries run natively on x64 W
 
 The Windows port uses the same Falco plugin architecture as Linux/macOS with two adaptations:
 - **IPC**: TCP on `127.0.0.1:2803` instead of Unix domain sockets (Rust's `std::os::unix::net` is not available on Windows)
-- **Alert delivery**: Falco writes JSON alerts to stdout, and a lightweight `stdout-forwarder` binary pipes each line to the plugin's HTTP server via TCP. This replaces Falco's `http_output` which requires curl/OpenSSL dependencies. The pipeline is: `falco.exe -U ... | stdout-forwarder.exe http://127.0.0.1:2802`
-
-> **Note**: The `http_output` patch and build support are included (`falco-windows-http-output.patch`) for native x64 Windows machines where curl/OpenSSL are available. On ARM64 Windows running x64 via emulation, the stdout-forwarder is more reliable.
+- **Alert delivery**: Falco writes JSON alerts to stdout, and a lightweight `stdout-forwarder` binary (177KB) pipes each line to the plugin's HTTP server via TCP: `falco.exe -U ... | stdout-forwarder.exe http://127.0.0.1:2802`. This is required because Falco's built-in `http_output` (curl-based) does not reliably POST to localhost on Windows.
 
 ## Prerequisites
 
