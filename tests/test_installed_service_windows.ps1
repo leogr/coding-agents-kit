@@ -15,7 +15,6 @@ $ErrorActionPreference = 'Stop'
 $Prefix = Join-Path $env:LOCALAPPDATA 'coding-agents-kit'
 $Launcher = Join-Path $Prefix 'bin\coding-agents-kit-launcher.ps1'
 $Hook = Join-Path $Prefix 'bin\claude-interceptor.exe'
-$SockPath = ($Prefix -replace '\\', '/') + '/run/broker.sock'
 $PASS = 0
 $FAIL = 0
 $launcherProc = $null
@@ -44,7 +43,8 @@ function Run-Hook([string]$Json) {
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
-    $psi.EnvironmentVariables['CODING_AGENTS_KIT_SOCKET'] = $SockPath
+    # Do NOT set CODING_AGENTS_KIT_SOCKET — test the interceptor's default
+    # socket path discovery (%LOCALAPPDATA%/coding-agents-kit/run/broker.sock)
     $psi.EnvironmentVariables['CODING_AGENTS_KIT_TIMEOUT_MS'] = '8000'
     $proc = [System.Diagnostics.Process]::Start($psi)
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Json)
@@ -143,20 +143,22 @@ if ($claudeExe) {
         Write-Host "  SKIP: no Claude Code settings.json found"
     }
 
-    # Test: ask Claude to run a safe command via --print (non-interactive)
-    # This exercises the real hook path: Claude → hook → interceptor → broker → Falco → verdict
+    # Test: ask Claude to use a tool (Bash) via --print (non-interactive).
+    # This exercises the real hook path: Claude → PreToolUse hook → interceptor →
+    # broker → Falco → rules → verdict → response → Claude proceeds/blocks.
+    # "echo hello" forces the Bash tool, which triggers the hook.
     Write-Host "  Testing Claude Code with real hook (this may take a moment)..."
     $prevPref = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $claudeOut = & claude --print "What is 2+2? Reply with just the number." 2>&1
+    $claudeOut = & claude --print "Run this exact command and show me the output: echo hello_from_hook_test" 2>&1
     $ErrorActionPreference = $prevPref
     $claudeStr = ($claudeOut | Out-String).Trim()
-    if ($claudeStr.Contains('4')) {
-        Write-Host "  PASS: Claude Code responded (hook didn't block)"
+    if ($claudeStr.Contains('hello_from_hook_test')) {
+        Write-Host "  PASS: Claude Code ran Bash tool through hook pipeline"
         $PASS++
     } else {
-        Write-Host "  INFO: Claude Code response: $claudeStr"
-        Write-Host "  (This may fail if Claude Code requires auth or the model is unavailable)"
+        Write-Host "  INFO: Claude Code response: $($claudeStr.Substring(0, [Math]::Min(200, $claudeStr.Length)))"
+        Write-Host "  (May fail if Claude Code requires auth or the model is unavailable)"
     }
 } else {
     Write-Host "`n=== Claude Code integration ==="

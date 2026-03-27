@@ -175,11 +175,13 @@ The installer:
 
 ### Uninstalling
 
-Via Apps & Features (Settings → Apps), or:
+**Always use the uninstall helper script** — it stops the service, removes the Claude Code hook, removes the auto-start registry key, and then removes files:
 
 ```powershell
-powershell -File build\out\Uninstall-CodingAgentsKit.ps1
+powershell -File Uninstall-CodingAgentsKit.ps1
 ```
+
+> **Warning**: Do NOT uninstall via Apps & Features or `msiexec /x` directly. The MSI alone cannot run cleanup scripts (Windows limitation for per-user installs), so the Claude Code hook and auto-start registry key would be left behind, leaving Claude Code in a fail-closed state.
 
 ## Running Tests
 
