@@ -707,8 +707,24 @@ fn uninstall(prefix: &PathBuf, keep_user_rules: bool) {
 // ---------------------------------------------------------------------------
 
 fn health(prefix: &PathBuf) {
+    #[cfg(unix)]
     let interceptor = prefix.join("bin/claude-interceptor");
-    let socket = prefix.join("run/broker.sock");
+    #[cfg(windows)]
+    let interceptor = prefix.join("bin/claude-interceptor.exe");
+
+    // Socket path must use forward slashes on Windows — AF_UNIX treats the path
+    // as an opaque address, so it must match exactly what the plugin binds to.
+    let socket = {
+        let raw = prefix.join("run/broker.sock");
+        #[cfg(windows)]
+        {
+            std::path::PathBuf::from(raw.to_string_lossy().replace('\\', "/"))
+        }
+        #[cfg(unix)]
+        {
+            raw
+        }
+    };
 
     // Check interceptor binary exists.
     if !interceptor.exists() {
