@@ -96,7 +96,7 @@ New-Item -ItemType Directory -Force -Path $RulesDir | Out-Null
 - rule: Deny reading sensitive paths
   desc: Block reads from sensitive paths
   condition: tool.name = "Read" and (tool.real_file_path startswith "C:/Windows" or tool.real_file_path contains ".ssh")
-  output: "Falco blocked reading %tool.real_file_path because it is a sensitive path"
+  output: "DENY id=%correlation.id read %tool.real_file_path"
   priority: CRITICAL
   source: coding_agent
   tags: [coding_agent_deny]
@@ -317,10 +317,13 @@ Write-Host "=== Allow: Read tool ==="
 $out = Run-Hook (Make-InputJson 'Read' '{"file_path":"C:\\Users\\test\\readme.txt"}' 'C:\Users\test' 'toolu_read1')
 Assert-Decision $out 'allow' 'read allowed'
 
-# TODO: Read tool deny rules need investigation — path resolution for Read
-# tool inputs on Windows doesn't match rules correctly. The pipeline works
-# (allow verdicts resolve), but deny conditions aren't triggering.
-# Skipping for now: "Deny read system path", "Deny read .ssh"
+Write-Host "=== Deny: read Windows system path ==="
+$out = Run-Hook (Make-InputJson 'Read' '{"file_path":"C:\\Windows\\System32\\config\\SAM"}' 'C:\Users\test' 'toolu_readsys1')
+Assert-Decision $out 'deny' 'read system path denied'
+
+Write-Host "=== Deny: read .ssh ==="
+$out = Run-Hook (Make-InputJson 'Read' '{"file_path":"C:\\Users\\test\\.ssh\\id_rsa"}' 'C:\Users\test' 'toolu_ssh1')
+Assert-Decision $out 'deny' 'read .ssh denied'
 
 Write-Host "=== Allow: Grep tool ==="
 $out = Run-Hook (Make-InputJson 'Grep' '{"pattern":"foo","path":"C:\\Users\\test"}' 'C:\Users\test' 'toolu_grep1')

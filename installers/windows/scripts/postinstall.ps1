@@ -9,7 +9,7 @@
     hook, and sets up auto-start via Registry Run key.
 #>
 param(
-    [string]$Prefix = (Join-Path $env:USERPROFILE '.coding-agents-kit')
+    [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'coding-agents-kit')
 )
 
 Set-StrictMode -Version Latest

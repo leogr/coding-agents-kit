@@ -13,12 +13,22 @@ fn home_dir() -> String {
     }
     #[cfg(windows)]
     {
-        env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string())
+        env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string())
+        })
     }
 }
 
 fn default_prefix() -> PathBuf {
-    PathBuf::from(home_dir()).join(".coding-agents-kit")
+    #[cfg(unix)]
+    {
+        PathBuf::from(home_dir()).join(".coding-agents-kit")
+    }
+    #[cfg(windows)]
+    {
+        // MSI installs to %LOCALAPPDATA%\coding-agents-kit (no leading dot)
+        PathBuf::from(home_dir()).join("coding-agents-kit")
+    }
 }
 
 fn plugin_config_path(prefix: &PathBuf) -> PathBuf {
@@ -26,7 +36,15 @@ fn plugin_config_path(prefix: &PathBuf) -> PathBuf {
 }
 
 fn claude_settings_path() -> PathBuf {
-    PathBuf::from(home_dir()).join(".claude/settings.json")
+    #[cfg(unix)]
+    {
+        PathBuf::from(home_dir()).join(".claude/settings.json")
+    }
+    #[cfg(windows)]
+    {
+        let home = env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string());
+        PathBuf::from(home).join(".claude/settings.json")
+    }
 }
 
 fn interceptor_command(prefix: &PathBuf) -> String {

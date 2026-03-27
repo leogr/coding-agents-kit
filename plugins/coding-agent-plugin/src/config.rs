@@ -48,8 +48,8 @@ fn default_socket_path() -> String {
     }
     #[cfg(windows)]
     {
-        if let Ok(profile) = std::env::var("USERPROFILE") {
-            format!("{}/.coding-agents-kit/run/broker.sock", profile.replace('\\', "/"))
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            format!("{}/coding-agents-kit/run/broker.sock", local.replace('\\', "/"))
         } else {
             "C:/coding-agents-kit-broker.sock".to_string()
         }

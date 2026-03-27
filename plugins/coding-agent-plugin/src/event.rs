@@ -161,6 +161,7 @@ impl ParsedEvent {
         let tool_input_command = extract_command(&tool_name, &tool_input);
         let mcp_server = extract_mcp_server(&tool_name);
 
+
         Some(ParsedFields {
             agent_name: agent_name.to_string(),
             correlation_id,

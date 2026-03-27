@@ -10,7 +10,7 @@
     ExecStartPost/ExecStopPost hooks.
 #>
 param(
-    [string]$Prefix = (Join-Path $env:USERPROFILE '.coding-agents-kit')
+    [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'coding-agents-kit')
 )
 
 Set-StrictMode -Version Latest

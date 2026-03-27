@@ -9,7 +9,7 @@
     the auto-start Registry key.
 #>
 param(
-    [string]$Prefix = (Join-Path $env:USERPROFILE '.coding-agents-kit')
+    [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'coding-agents-kit')
 )
 
 $ErrorActionPreference = 'SilentlyContinue'

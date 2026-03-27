@@ -156,13 +156,13 @@ fn get_socket_path() -> String {
     }
     #[cfg(windows)]
     {
-        let home = env::var("USERPROFILE").unwrap_or_default();
-        if home.is_empty() {
+        // MSI installs to %LOCALAPPDATA%\coding-agents-kit (not %USERPROFILE%)
+        let base = env::var("LOCALAPPDATA").unwrap_or_default();
+        if base.is_empty() {
             return String::new();
         }
-        // Use forward slashes to match the Falco plugin config (YAML backslashes
-        // are escape sequences, so configs use forward slashes on Windows).
-        format!("{}{SOCKET_SUFFIX}", home.replace('\\', "/"))
+        // Use forward slashes — YAML configs and AF_UNIX paths must match exactly.
+        format!("{}/coding-agents-kit/run/broker.sock", base.replace('\\', "/"))
     }
 }
 

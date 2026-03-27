@@ -245,8 +245,16 @@ if ($LASTEXITCODE -ne 0) { throw 'WiX build failed.' }
 $uninstallScript = Join-Path $OutputDir 'Uninstall-CodingAgentsKit.ps1'
 @"
 # Uninstall coding-agents-kit $Version
+# Run cleanup first: stop service, remove hook, remove auto-start
+`$prefix = Join-Path `$env:LOCALAPPDATA 'coding-agents-kit'
+`$cleanup = Join-Path `$prefix 'scripts\uninstall.ps1'
+if (Test-Path `$cleanup) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File `$cleanup -Prefix `$prefix
+}
+# Remove files via MSI
 `$p = Start-Process msiexec -ArgumentList '/x', '$ProductCode', '/quiet' -Wait -PassThru
-if (`$p.ExitCode -ne 0) { Write-Error "Uninstall failed (exit `$(`$p.ExitCode))" }
+if (`$p.ExitCode -ne 0 -and `$p.ExitCode -ne 1605) { Write-Error "Uninstall failed (exit `$(`$p.ExitCode))" }
+Write-Host "Uninstall complete"
 "@ | Set-Content $uninstallScript -Encoding UTF8
 
 # ---------------------------------------------------------------------------
