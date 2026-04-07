@@ -12,7 +12,7 @@ Requires latest stable Rust (the `falco_plugin` SDK tracks latest stable as MSRV
 cargo build --release
 ```
 
-Output: `target/release/libcoding_agent_plugin.so` (Linux) / `.dylib` (macOS)
+Output: `target/release/libcoding_agent.so` (Linux) / `.dylib` (macOS)
 
 ## How It Works
 

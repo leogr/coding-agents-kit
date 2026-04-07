@@ -3,7 +3,7 @@
 
 plugins:
   - name: coding_agent
-    library_path: ${HOME}/.coding-agents-kit/share/libcoding_agent_plugin.so
+    library_path: ${HOME}/.coding-agents-kit/share/libcoding_agent.so
     init_config:
       # Operational mode: "enforcement" (default) or "monitor".
       # In monitor mode, rules are evaluated and logged but all verdicts resolve as allow.

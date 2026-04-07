@@ -71,10 +71,10 @@ if [[ "$ARCH" == "universal" ]]; then
         echo "  lipo: $bin"
         lipo -create "$ARM_DIR/$bin" "$X86_DIR/$bin" -output "$BUILD_DIR/$bin"
     done
-    echo "  lipo: share/libcoding_agent_plugin.dylib"
-    lipo -create "$ARM_DIR/share/libcoding_agent_plugin.dylib" \
-                 "$X86_DIR/share/libcoding_agent_plugin.dylib" \
-                 -output "$BUILD_DIR/share/libcoding_agent_plugin.dylib"
+    echo "  lipo: share/libcoding_agent.dylib"
+    lipo -create "$ARM_DIR/share/libcoding_agent.dylib" \
+                 "$X86_DIR/share/libcoding_agent.dylib" \
+                 -output "$BUILD_DIR/share/libcoding_agent.dylib"
 
     # Create tar.gz.
     echo "Creating tar.gz..."
@@ -135,14 +135,14 @@ esac
 if [[ "$ARCH" != "$HOST_ARCH" ]]; then
     CARGO_TARGET_FLAG="--target $RUST_TARGET"
     INTERCEPTOR_BIN="hooks/claude-code/target/$RUST_TARGET/release/claude-interceptor"
-    PLUGIN_LIB="plugins/coding-agent-plugin/target/$RUST_TARGET/release/libcoding_agent_plugin.dylib"
+    PLUGIN_LIB="plugins/coding-agent-plugin/target/$RUST_TARGET/release/libcoding_agent.dylib"
     CTL_BIN="tools/coding-agents-kit-ctl/target/$RUST_TARGET/release/coding-agents-kit-ctl"
     # Ensure Rust target is installed.
     rustup target add "$RUST_TARGET" 2>/dev/null || true
 else
     CARGO_TARGET_FLAG=""
     INTERCEPTOR_BIN="hooks/claude-code/target/release/claude-interceptor"
-    PLUGIN_LIB="plugins/coding-agent-plugin/target/release/libcoding_agent_plugin.dylib"
+    PLUGIN_LIB="plugins/coding-agent-plugin/target/release/libcoding_agent.dylib"
     CTL_BIN="tools/coding-agents-kit-ctl/target/release/coding-agents-kit-ctl"
 fi
 
@@ -180,12 +180,12 @@ mkdir -p "$BUILD_DIR"/{bin,share,config,rules/default,rules/user,launchd}
 # Binaries.
 cp "$ROOT_DIR/$INTERCEPTOR_BIN" "$BUILD_DIR/bin/claude-interceptor"
 cp "$ROOT_DIR/$CTL_BIN" "$BUILD_DIR/bin/coding-agents-kit-ctl"
-cp "$ROOT_DIR/$PLUGIN_LIB" "$BUILD_DIR/share/libcoding_agent_plugin.dylib"
+cp "$ROOT_DIR/$PLUGIN_LIB" "$BUILD_DIR/share/libcoding_agent.dylib"
 cp "$FALCO_BIN" "$BUILD_DIR/bin/falco"
 
 # Config files (with .so -> .dylib transform for macOS).
 cp "$ROOT_DIR/configs/falco.yaml" "$BUILD_DIR/config/"
-sed 's/libcoding_agent_plugin\.so/libcoding_agent_plugin.dylib/g' \
+sed 's/libcoding_agent\.so/libcoding_agent.dylib/g' \
     "$ROOT_DIR/configs/falco.coding_agents_plugin.yaml" \
     > "$BUILD_DIR/config/falco.coding_agents_plugin.yaml"
 
@@ -221,7 +221,7 @@ mkdir -p "$PKG_ROOT"/{bin,share,config,rules/default,rules/user,launchd,log}
 cp "$BUILD_DIR/bin/falco" "$PKG_ROOT/bin/"
 cp "$BUILD_DIR/bin/claude-interceptor" "$PKG_ROOT/bin/"
 cp "$BUILD_DIR/bin/coding-agents-kit-ctl" "$PKG_ROOT/bin/"
-cp "$BUILD_DIR/share/libcoding_agent_plugin.dylib" "$PKG_ROOT/share/"
+cp "$BUILD_DIR/share/libcoding_agent.dylib" "$PKG_ROOT/share/"
 cp "$BUILD_DIR/config/falco.yaml" "$PKG_ROOT/config/"
 cp "$BUILD_DIR/config/falco.coding_agents_plugin.yaml" "$PKG_ROOT/config/"
 cp "$BUILD_DIR/rules/default/coding_agents_rules.yaml" "$PKG_ROOT/rules/default/"

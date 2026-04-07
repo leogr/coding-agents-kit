@@ -178,7 +178,7 @@ All components are installed under `~/.coding-agents-kit/`:
 │   └── falco.coding_agents_plugin.yaml  # Plugin config (plugin def, rules, http_output)
 ├── log/                    # Falco logs: falco.log (stdout), falco.err (stderr)
 ├── run/                    # Runtime: broker.sock
-├── share/                  # Shared libraries: libcoding_agent_plugin.so (.dylib on macOS)
+├── share/                  # Shared libraries: libcoding_agent.so (.dylib on macOS)
 └── rules/
     ├── default/
     │   └── coding_agents_rules.yaml  # Default ruleset (overwritten on upgrade)
@@ -306,7 +306,7 @@ cargo build --release     # .so (Linux) or .dylib (macOS) at target/release/
 # Verify with Falco
 falco -o "engine.kind=nodriver" \
   -o "plugins[0].name=coding_agent" \
-  -o "plugins[0].library_path=$(pwd)/target/release/libcoding_agent_plugin.so" \
+  -o "plugins[0].library_path=$(pwd)/target/release/libcoding_agent.so" \
   -o 'plugins[0].init_config={}' \
   -o "load_plugins[0]=coding_agent" \
   --plugin-info coding_agent

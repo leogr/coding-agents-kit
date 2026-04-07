@@ -12,7 +12,7 @@ case "$(uname -s)" in
     Darwin) PLUGIN_EXT="dylib" ;;
     *)      PLUGIN_EXT="so" ;;
 esac
-PLUGIN_LIB="${ROOT_DIR}/plugins/coding-agent-plugin/target/release/libcoding_agent_plugin.${PLUGIN_EXT}"
+PLUGIN_LIB="${ROOT_DIR}/plugins/coding-agent-plugin/target/release/libcoding_agent.${PLUGIN_EXT}"
 # Use build/ for temp files to avoid /tmp restrictions on some platforms.
 E2E_DIR="${ROOT_DIR}/build/e2e-$$"
 mkdir -p "$E2E_DIR"

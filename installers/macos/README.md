@@ -107,7 +107,7 @@ xattr -dr com.apple.quarantine ~/.coding-agents-kit/bin/*
 ├── config/                 # falco.yaml, falco.coding_agents_plugin.yaml
 ├── log/                    # falco.log (stdout), falco.err (stderr)
 ├── run/                    # broker.sock (runtime)
-├── share/                  # libcoding_agent_plugin.dylib
+├── share/                  # libcoding_agent.dylib
 └── rules/
     ├── default/            # Default rules (overwritten on upgrade)
     ├── user/               # Custom rules (preserved on upgrade)
