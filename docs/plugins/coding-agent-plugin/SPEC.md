@@ -3,7 +3,7 @@
 | Field    | Value                        |
 |----------|------------------------------|
 | Version  | 0.1.0                        |
-| Library  | `libcoding_agent_plugin.so`  |
+| Library  | `libcoding_agent.so`  |
 | Source   | `plugins/coding-agent-plugin/` |
 | Language | Rust (falco_plugin SDK v0.5) |
 

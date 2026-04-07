@@ -77,7 +77,7 @@ fi
 
 # Verify we have the package contents.
 for f in bin/falco bin/claude-interceptor bin/coding-agents-kit-ctl \
-         share/libcoding_agent_plugin.dylib \
+         share/libcoding_agent.dylib \
          config/falco.yaml config/falco.coding_agents_plugin.yaml \
          rules/seen.yaml launchd/dev.falcosecurity.coding-agents-kit.plist \
          launchd/coding-agents-kit-launcher.sh; do
@@ -131,7 +131,7 @@ run install -m 755 "$SCRIPT_DIR/bin/claude-interceptor" "$PREFIX/bin/claude-inte
 run install -m 755 "$SCRIPT_DIR/bin/coding-agents-kit-ctl" "$PREFIX/bin/coding-agents-kit-ctl"
 
 info "Installing plugin..."
-run install -m 644 "$SCRIPT_DIR/share/libcoding_agent_plugin.dylib" "$PREFIX/share/libcoding_agent_plugin.dylib"
+run install -m 644 "$SCRIPT_DIR/share/libcoding_agent.dylib" "$PREFIX/share/libcoding_agent.dylib"
 
 info "Installing configuration..."
 run install -m 644 "$SCRIPT_DIR/config/falco.yaml" "$PREFIX/config/falco.yaml"
@@ -178,7 +178,7 @@ echo ""
 echo "  Install prefix:  $PREFIX"
 echo "  Falco binary:    $PREFIX/bin/falco"
 echo "  Interceptor:     $PREFIX/bin/claude-interceptor"
-echo "  Plugin:          $PREFIX/share/libcoding_agent_plugin.dylib"
+echo "  Plugin:          $PREFIX/share/libcoding_agent.dylib"
 echo "  Config:          $PREFIX/config/"
 echo "  Rules:           $PREFIX/rules/"
 echo "  User rules:      $PREFIX/rules/user/ (add custom rules here)"

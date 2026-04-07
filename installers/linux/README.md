@@ -61,7 +61,7 @@ If `dialog` is available, the installer provides an interactive confirmation pro
 ├── bin/                    # falco, claude-interceptor, coding-agents-kit-ctl
 ├── config/                 # falco.yaml, falco.coding_agents_plugin.yaml
 ├── run/                    # broker.sock (runtime)
-├── share/                  # libcoding_agent_plugin.so
+├── share/                  # libcoding_agent.so
 └── rules/
     ├── default/            # Default rules (overwritten on upgrade)
     ├── user/               # Custom rules (preserved on upgrade)

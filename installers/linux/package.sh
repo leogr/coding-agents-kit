@@ -46,13 +46,13 @@ if [[ "$ARCH" == "$HOST_ARCH" ]]; then
     # Native build — no cross-compilation flags needed.
     CARGO_TARGET_FLAG=""
     INTERCEPTOR_BIN="hooks/claude-code/target/release/claude-interceptor"
-    PLUGIN_LIB="plugins/coding-agent-plugin/target/release/libcoding_agent_plugin.so"
+    PLUGIN_LIB="plugins/coding-agent-plugin/target/release/libcoding_agent.so"
     CTL_BIN="tools/coding-agents-kit-ctl/target/release/coding-agents-kit-ctl"
 else
     # Cross-compilation.
     CARGO_TARGET_FLAG="--target $RUST_TARGET"
     INTERCEPTOR_BIN="hooks/claude-code/target/$RUST_TARGET/release/claude-interceptor"
-    PLUGIN_LIB="plugins/coding-agent-plugin/target/$RUST_TARGET/release/libcoding_agent_plugin.so"
+    PLUGIN_LIB="plugins/coding-agent-plugin/target/$RUST_TARGET/release/libcoding_agent.so"
     CTL_BIN="tools/coding-agents-kit-ctl/target/$RUST_TARGET/release/coding-agents-kit-ctl"
 fi
 
@@ -93,7 +93,7 @@ mkdir -p "$BUILD_DIR"/{bin,share,config,rules/default,rules/user,systemd}
 # Binaries.
 cp "$ROOT_DIR/$INTERCEPTOR_BIN" "$BUILD_DIR/bin/claude-interceptor"
 cp "$ROOT_DIR/$CTL_BIN" "$BUILD_DIR/bin/coding-agents-kit-ctl"
-cp "$ROOT_DIR/$PLUGIN_LIB" "$BUILD_DIR/share/libcoding_agent_plugin.so"
+cp "$ROOT_DIR/$PLUGIN_LIB" "$BUILD_DIR/share/libcoding_agent.so"
 
 # Extract only falco binary from the tarball.
 tar xzf "$FALCO_CACHE" --strip-components=3 -C "$BUILD_DIR/bin/" \
