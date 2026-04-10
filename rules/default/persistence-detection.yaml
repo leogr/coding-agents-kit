@@ -13,15 +13,19 @@
 #   Rule 3 (ASK):   Write to .git/hooks/ directory
 #                   — git hook executes on every git operation for the lifetime
 #                     of the repository clone
-#   Rule 4 (ASK):   Write to .npmrc / .pypirc / pip.conf with registry redirect
-#                   — redirects every subsequent package install to an
-#                     attacker-controlled registry (supply chain pivot)
-#   Rule 5 (DENY):  Write to .env / .envrc with AI API base URL override
+#   Rule 4 (ASK):   Write to .npmrc / .pypirc / pip.conf / .pnpmrc / .yarnrc.yml
+#                   with registry redirect — redirects every subsequent package
+#                   install to an attacker-controlled registry (supply chain pivot)
+#   Rule 5 (DENY):  Write to .env / .envrc / .env.* with AI API base URL override
 #                   — proxies all API calls through an attacker-controlled endpoint
 #                     where prompts and responses can be read or modified
-#   Rule 6 (ASK):   Write to .env / .envrc with AI API key assignment
+#   Rule 6 (ASK):   Write to .env / .envrc / .env.* with AI API key assignment
 #                   — agent writing its own API key to a file risks committing
 #                     it to version control or exfiltrating it in a later step
+#   Rule 7 (ASK):   Bash command writing to .git/hooks/
+#                   — shell redirection bypasses the Write/Edit filter in Rule 3
+#   Rule 8 (ASK):   Bash command running npm/pip config set for registry
+#                   — CLI-level registry redirect that never writes through Write/Edit
 #
 # These rules complement:
 #   sandbox-disable.yaml — settings.json writes that disable the OS sandbox
@@ -75,28 +79,34 @@
 
 # Matches Write or Edit to package manager configuration files that control
 # where packages are downloaded from.
-# .npmrc — npm/yarn/pnpm registry configuration
-# .pypirc — Python package index for publishing
+# .npmrc — npm registry configuration (also used by some yarn v1 setups)
+# .pypirc — Python package index for publishing (twine, flit)
 # pip.conf — Python pip index for installation
+# .pnpmrc — pnpm registry configuration (registry= key, same format as .npmrc)
+# .yarnrc.yml — yarn v2/v3 registry configuration (npmRegistryServer key)
 - macro: is_registry_config_write
   condition: >
     tool.name in ("Write", "Edit")
     and tool.file_path != ""
     and (basename(tool.file_path) = ".npmrc"
          or basename(tool.file_path) = ".pypirc"
-         or basename(tool.file_path) = "pip.conf")
+         or basename(tool.file_path) = "pip.conf"
+         or basename(tool.file_path) = ".pnpmrc"
+         or basename(tool.file_path) = ".yarnrc.yml")
 
 # Matches content keys that redirect package downloads to a custom index.
-# registry=   — npm/yarn registry (no space, npmrc format)
-# index-url   — pip primary index (pip.conf uses "key = value" with spaces)
-# extra-index-url — pip secondary index
-# index-server — pypirc server section header value
-# repository  — pypirc repository URL
+# registry=            — npm/pnpm registry (no space, npmrc/.pnpmrc format)
+# npmRegistryServer    — yarn v2/v3 primary registry (in .yarnrc.yml)
+# index-url            — pip primary index (pip.conf uses "key = value" with spaces)
+# extra-index-url      — pip secondary index
+# index-server         — pypirc server section header value
+# repository           — pypirc repository URL
 # Note: pip.conf and .pypirc use "key = value" format (spaces around =),
 # so checks for the key name only — not "key=" — to match both styles.
 - macro: is_registry_redirect_content
   condition: >
     tool.input contains "registry="
+    or tool.input contains "npmRegistryServer"
     or tool.input contains "index-url"
     or tool.input contains "extra-index-url"
     or tool.input contains "index-server"
@@ -109,6 +119,10 @@
 # Matches Write or Edit to environment variable files that shells or tools
 # source automatically. Covers project-local variants to avoid false positives
 # on remote/CI environment files not loaded locally.
+# .env.staging / .env.test / .env.ci are common CI/CD pipeline env files
+# loaded by Docker Compose, GitHub Actions, and Heroku.
+# .env.override is used by some frameworks (Symfony, Next.js) to override
+# all other env files regardless of NODE_ENV.
 - macro: is_env_file_write
   condition: >
     tool.name in ("Write", "Edit")
@@ -117,7 +131,11 @@
          or basename(tool.file_path) = ".envrc"
          or basename(tool.file_path) = ".env.local"
          or basename(tool.file_path) = ".env.development"
-         or basename(tool.file_path) = ".env.production")
+         or basename(tool.file_path) = ".env.production"
+         or basename(tool.file_path) = ".env.staging"
+         or basename(tool.file_path) = ".env.test"
+         or basename(tool.file_path) = ".env.ci"
+         or basename(tool.file_path) = ".env.override")
 
 # Matches env content that overrides the AI API base URL.
 # ANTHROPIC_BASE_URL — Claude Code / Anthropic SDK endpoint
@@ -239,11 +257,11 @@
 - rule: Ask before writing AI API key to environment file
   desc: >
     Requires user confirmation when the agent writes or edits an environment file
-    (.env, .envrc, .env.local, etc.) with content containing an AI provider API
-    key variable (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY). Writing the
-    active API key to a file creates two risks: (1) the file may be committed to
-    version control and exposed publicly, and (2) it stages the credential for
-    exfiltration via a subsequent curl or upload command. Asks rather than denies
+    (.env, .envrc, .env.local, .env.staging, .env.test, etc.) with content containing
+    an AI provider API key variable (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY).
+    Writing the active API key to a file creates two risks: (1) the file may be
+    committed to version control and exposed publicly, and (2) it stages the credential
+    for exfiltration via a subsequent curl or upload command. Asks rather than denies
     because legitimate project setup workflows (creating .env.example, wiring up
     a new application) do write API key variable names to environment files.
   condition: is_env_file_write and is_api_key_in_env
@@ -253,3 +271,72 @@
   source: coding_agent
   tags: [coding_agent_ask, AML.T0037_llm_adversarial_example,
          mitre_t1552_unsecured_credentials]
+
+# ---------------------------------------------------------------------------
+# Rule 7: Bash writes to .git/hooks/ (Bash-level bypass of Rule 3)
+# ---------------------------------------------------------------------------
+
+# Matches Bash commands referencing the git hooks directory path.
+# Rule 3 catches Write/Edit tool calls; shell redirection via Bash bypasses it.
+- macro: is_bash_git_hooks_write
+  condition: >
+    tool.name = "Bash"
+    and tool.input_command contains "/.git/hooks/"
+
+- rule: Ask before Bash command accessing git hooks directory
+  desc: >
+    Requires user confirmation when a Bash command references a .git/hooks/
+    directory path. Shell redirections (echo >, tee, cp, chmod +x) can write
+    or activate persistent git hooks without using the Write or Edit tools,
+    bypassing Rule 3. Git hooks execute automatically on git operations and
+    persist long after the agent session ends. Asks rather than denies because
+    legitimate devops tasks (installing pre-commit linters, auditing hooks)
+    also involve referencing this path.
+  condition: is_bash_git_hooks_write
+  output: >
+    Falco requires confirmation before a Bash command accesses the git hooks directory (%tool.input_command)
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask, AML.T0043_craft_adversarial_data,
+         mitre_t1546_event_triggered_execution]
+
+# ---------------------------------------------------------------------------
+# Rule 8: Bash CLI-level registry redirect (Bash-level bypass of Rule 4)
+# ---------------------------------------------------------------------------
+
+# Matches Bash commands running npm config set or pip config set to redirect
+# the package registry. These modify the global ~/.npmrc or pip config file
+# via the CLI, never going through the Write/Edit tool path.
+- macro: is_bash_npm_registry_redirect
+  condition: >
+    (tool.input_command contains "npm config set registry"
+     or tool.input_command contains "npm set registry")
+
+- macro: is_bash_pip_registry_redirect
+  condition: >
+    (tool.input_command contains "pip config set"
+     or tool.input_command contains "pip3 config set")
+    and (tool.input_command contains "index-url"
+         or tool.input_command contains "extra-index-url")
+
+- macro: is_bash_registry_redirect
+  condition: >
+    is_bash_npm_registry_redirect
+    or is_bash_pip_registry_redirect
+
+- rule: Ask before Bash command redirecting package registry
+  desc: >
+    Requires user confirmation when a Bash command runs a package manager
+    CLI-level registry redirect: npm config set registry, npm set registry,
+    pip config set global.index-url, or pip config set global.extra-index-url.
+    These commands modify the user's global package manager config, redirecting
+    all future package installs to the specified endpoint. Unlike file writes
+    (caught by Rule 4), these CLI commands modify config atomically via the
+    package manager's own write path, bypassing Write/Edit tool detection.
+  condition: tool.name = "Bash" and is_bash_registry_redirect
+  output: >
+    Falco requires confirmation before a Bash command redirects the package registry (%tool.input_command)
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask, AML.T0010_ml_supply_chain_compromise,
+         mitre_t1195_supply_chain_compromise]
