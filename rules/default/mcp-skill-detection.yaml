@@ -1,0 +1,329 @@
+# Malicious MCP server, skill, and plugin detection rules for coding-agents-kit.
+# Detects supply chain attacks and prompt injection attempts that add or register
+# malicious external tools to the coding agent.
+#
+# Placed in rules/default/ as part of the default ruleset.
+#
+# MCP vs. Skill attack surface:
+#   MCP servers    — external processes, config in .mcp.json (JSON)
+#                    Attack: poison the config entry (command path, URL, encoding)
+#   Skills/Commands — instruction files in .claude/commands/ (Markdown)
+#                    Attack: inject malicious content into the instruction file itself
+#                    (prompt injection, IOC domain reference, embedded pipe-to-shell)
+#
+# Coverage:
+#   Rule 1 (DENY):  MCP config write with "command" pointing to a temporary directory
+#                   — staged payload in /tmp registered as an MCP server
+#   Rule 2 (DENY):  MCP config write with IOC domain in the server "url" field
+#                   — SSE-transport server pointing to a ClawHavoc campaign host
+#   Rule 3 (DENY):  MCP config write with base64-encoded "command"
+#                   — obfuscated server command to evade string-match detection
+#   Rule 4 (ASK):   Agent self-registering MCP server via Bash (claude mcp add, etc.)
+#                   — agent autonomously expanding its own tool surface
+#   Rule 5 (ASK):   Write to .claude/commands/ — persistent slash command backdoor
+#   Rule 6 (ASK):   CLAUDE.md write outside working directory — prompt injection
+#                   across all future Claude Code sessions in the directory tree
+#   Rule 7 (DENY):  Skill/command file written with IOC domain in content
+#                   — skill instructs Claude to fetch from a ClawHavoc campaign host
+#   Rule 8 (DENY):  Skill/command file written with pipe-to-shell in content
+#                   — skill embeds | bash / curl | sh for direct command execution
+#   Rule 9 (ASK):   npx -y auto-accept MCP/skill installation
+#                   — -y flag silently bypasses npm package install confirmation
+#
+# IOC domains: ClawHavoc campaign (341 malicious skills, 2024-2025):
+#   pastebin.com, transfer.sh, file.io, termbin.com, ix.io, glot.io,
+#   hastebin.com, ghostbin.co
+#
+# These rules complement threat_rules.yaml which already covers:
+#   - MCP install from untrusted host (Bash + IOC domain, R14)
+#   - MCP server execution from temp path (Bash + --stdio/--sse, R15)
+#   - All MCP tool calls require confirmation (tool.mcp_server != "", R8)
+
+# ---------------------------------------------------------------------------
+# Macros
+# ---------------------------------------------------------------------------
+
+# Matches Write or Edit tool calls targeting MCP server configuration files.
+# .mcp.json is the project-level MCP config; managed-mcp.json is the managed variant.
+- macro: is_mcp_config_write
+  condition: >
+    tool.name in ("Write", "Edit")
+    and tool.file_path != ""
+    and (basename(tool.file_path) = ".mcp.json"
+         or basename(tool.file_path) = "managed-mcp.json")
+
+# Matches MCP config content where any path points to a temporary directory.
+# The "command": key prefix check ("\"command\":") is omitted — Falco does not
+# interpret \" inside condition string literals the way YAML does. Since the
+# rule already restricts to .mcp.json / managed-mcp.json files, checking for
+# temp paths anywhere in the content is specific enough: no legitimate MCP
+# server config has a /tmp path in any field.
+- macro: is_mcp_command_temp
+  condition: >
+    tool.input contains "/tmp/"
+    or tool.input contains "/dev/shm/"
+    or tool.input contains "/var/tmp/"
+
+# Matches MCP config content referencing a known malicious code-hosting domain
+# (ClawHavoc campaign IOCs). The "url": key prefix check is omitted for the
+# same reason — IOC domains in any field of an MCP config are sufficient signal.
+- macro: is_mcp_url_ioc
+  condition: >
+    tool.input contains "pastebin.com"
+    or tool.input contains "transfer.sh"
+    or tool.input contains "file.io"
+    or tool.input contains "termbin.com"
+    or tool.input contains "ix.io"
+    or tool.input contains "glot.io"
+    or tool.input contains "hastebin.com"
+    or tool.input contains "ghostbin.co"
+
+# Matches MCP config content containing base64 encoding anywhere in the config.
+# Obfuscated paths or commands in MCP configs have no legitimate use.
+# "command": key prefix check omitted for the same reason as above.
+- macro: is_mcp_command_encoded
+  condition: tool.input contains "base64"
+
+# Matches Bash commands that self-register MCP servers or plugins via the
+# Claude Code CLI. Covers all registration subcommands.
+- macro: is_mcp_self_register
+  condition: >
+    tool.input_command contains "claude mcp add"
+    or tool.input_command contains "claude mcp install"
+    or tool.input_command contains "claude mcp add-json"
+    or tool.input_command contains "claude mcp add-from-claude-desktop"
+    or tool.input_command contains "claude plugin install"
+    or tool.input_command contains "claude skill add"
+
+# ---------------------------------------------------------------------------
+# Rules
+# ---------------------------------------------------------------------------
+
+- rule: Deny MCP config with command from temporary directory
+  desc: >
+    Blocks writing an MCP server configuration file (.mcp.json, managed-mcp.json)
+    where the server "command" field points to a temporary directory (/tmp, /dev/shm,
+    /var/tmp). Legitimate MCP servers are installed to system or user package directories
+    — never to temporary storage. A "command" in /tmp indicates a staged payload being
+    registered as a persistent MCP server: the agent drops the binary first (caught by
+    the tmp-staging rule), then creates the config to wire it in. This rule closes the
+    Write/Edit vector that the existing Bash-level MCP temp-path rule (R15 in
+    threat_rules.yaml) does not cover.
+  condition: is_mcp_config_write and is_mcp_command_temp
+  output: >
+    Falco blocked writing an MCP server config with a command path in temporary storage at %tool.real_file_path
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0048_llm_plugin_compromise,
+         AML.T0051_llm_prompt_injection, mitre_t1059_command_and_scripting_interpreter]
+
+- rule: Deny MCP config with IOC domain in server URL
+  desc: >
+    Blocks writing an MCP server configuration file that includes a known malicious
+    code-hosting domain in the server "url" field. SSE-transport MCP servers specify
+    their endpoint as a URL; the existing untrusted-host rule (R14 in threat_rules.yaml)
+    only inspects Bash install commands, not Write/Edit tool content. Domains are the
+    confirmed IOCs from the ClawHavoc campaign targeting Claude Code, Gemini CLI, and
+    Codex agents with 341 malicious skills distributed via paste and file-hosting sites.
+  condition: is_mcp_config_write and is_mcp_url_ioc
+  output: >
+    Falco blocked writing an MCP server config with a malicious hosting domain in the server URL at %tool.real_file_path
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0048_llm_plugin_compromise,
+         AML.T0010_ml_supply_chain_compromise, mitre_t1059_command_and_scripting_interpreter]
+
+- rule: Deny MCP config with encoded server command
+  desc: >
+    Blocks writing an MCP server configuration file where the "command" field contains
+    base64, indicating an obfuscated server command decoded and executed at runtime.
+    Encoding MCP server commands has no legitimate use — it evades string-match detection
+    of malicious payloads in the command arguments. Typical pattern:
+    "command": "bash", "args": ["-c", "base64 -d <<< PAYLOAD | sh"].
+    The encoded payload execution rule in threat_rules.yaml covers Bash tool calls;
+    this rule covers the same obfuscation technique in MCP config writes.
+  condition: is_mcp_config_write and is_mcp_command_encoded
+  output: >
+    Falco blocked writing an MCP server config with an encoded command at %tool.real_file_path
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0048_llm_plugin_compromise,
+         AML.T0057_llm_data_poisoning, mitre_t1027_obfuscated_files_or_information]
+
+- rule: Ask before agent self-registering MCP server
+  desc: >
+    Requires user confirmation when the agent invokes claude mcp add, claude mcp add-json,
+    claude mcp install, claude mcp add-from-claude-desktop, claude plugin install, or
+    claude skill add through the Bash tool. An agent autonomously expanding its own tool
+    surface by adding MCP servers or plugins is an excessive agency indicator and a
+    supply chain pivot vector — the agent gains access to new external services without
+    explicit human approval. The existing untrusted-host rule (R14) requires both an
+    install command AND a known IOC domain; this rule covers any source.
+  condition: tool.name = "Bash" and is_mcp_self_register
+  output: >
+    Falco requires confirmation before the agent self-registers an MCP server or plugin (%tool.input_command)
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask, AML.T0048_llm_plugin_compromise,
+         AML.T0054_llm_jailbreak, mitre_t1059_command_and_scripting_interpreter]
+
+- rule: Ask before writing to Claude slash command directory
+  desc: >
+    Requires user confirmation when the agent writes or edits files under .claude/commands/.
+    This directory contains custom slash commands that execute arbitrary Bash on invocation
+    (the file content is the shell command that runs when a user types /commandname).
+    Writing here is a persistent backdoor vector: an injected prompt or malicious skill can
+    create a new /slash command that runs attacker-controlled code in every subsequent Claude
+    Code session. Unlike tool calls, slash command files persist indefinitely and are not
+    visible to the user without explicitly inspecting the commands directory.
+  condition: >
+    tool.name in ("Write", "Edit")
+    and tool.real_file_path != ""
+    and tool.real_file_path contains "/.claude/commands/"
+  output: >
+    Falco requires confirmation before writing a Claude slash command at %tool.real_file_path
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask, AML.T0051_llm_prompt_injection,
+         AML.T0043_craft_adversarial_data, mitre_t1546_event_triggered_execution]
+
+- rule: Ask before writing CLAUDE.md outside working directory
+  desc: >
+    Requires user confirmation when the agent writes or edits a CLAUDE.md file outside
+    the current working directory. CLAUDE.md files in any ancestor directory inject
+    instructions into Claude Code for all projects under that path — writing one to ~/,
+    ~/projects/, or / is a prompt injection attack that persists across sessions and
+    affects all future Claude Code invocations in that directory tree. The existing
+    agent instruction files rule covers .cursorrules, .windsurfrules, AGENTS.md;
+    this rule adds CLAUDE.md, Claude Code's own instruction file. Writes to CLAUDE.md
+    inside the working project directory are allowed.
+  condition: >
+    tool.name in ("Write", "Edit")
+    and tool.file_path != ""
+    and basename(tool.file_path) = "CLAUDE.md"
+    and tool.real_file_path != ""
+    and not tool.real_file_path startswith val(agent.real_cwd)
+  output: >
+    Falco requires confirmation before writing CLAUDE.md at %tool.real_file_path outside working directory %agent.real_cwd
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask, AML.T0051_llm_prompt_injection,
+         AML.T0043_craft_adversarial_data, mitre_t1059_command_and_scripting_interpreter]
+
+# ---------------------------------------------------------------------------
+# Skill/command file content macros (Rules 7–8)
+# ---------------------------------------------------------------------------
+
+# Matches Write/Edit to .claude/commands/ where the file content references
+# a known malicious hosting domain (ClawHavoc IOCs). A skill file that directs
+# Claude to fetch from pastebin.com or transfer.sh will cause the agent to
+# retrieve and execute attacker-controlled content on the next invocation.
+- macro: is_skill_commands_path
+  condition: >
+    tool.real_file_path contains "/.claude/commands/"
+
+- macro: is_skill_content_ioc
+  condition: >
+    is_skill_commands_path
+    and (tool.input contains "pastebin.com"
+         or tool.input contains "transfer.sh"
+         or tool.input contains "file.io"
+         or tool.input contains "termbin.com"
+         or tool.input contains "ix.io"
+         or tool.input contains "glot.io"
+         or tool.input contains "hastebin.com"
+         or tool.input contains "ghostbin.co")
+
+# Matches Write/Edit to .claude/commands/ where the file content contains a
+# pipe-to-shell pattern. Skills embedding these patterns instruct Claude to
+# execute remote content directly through a shell interpreter.
+# Helper macros avoid (A and B) terms inside an or-chain.
+- macro: is_skill_pipe_bash
+  condition: >
+    is_skill_commands_path
+    and (tool.input contains "| bash"
+         or tool.input contains "|bash"
+         or tool.input contains "| sh"
+         or tool.input contains "|sh"
+         or tool.input contains "bash <("
+         or tool.input contains "sh <(")
+
+# ---------------------------------------------------------------------------
+# npx auto-accept macro (Rule 9)
+# ---------------------------------------------------------------------------
+
+# Matches npx invocations that bypass npm's installation confirmation with -y
+# or --yes. The auto-accept flag combined with an MCP or skill package name
+# silently installs an unreviewed package. The existing untrusted-host rule
+# (R14 in threat_rules.yaml) requires an IOC domain; this covers any source.
+- macro: is_npx_auto_accept_mcp_skill
+  condition: >
+    (tool.input_command contains "npx -y "
+     or tool.input_command contains "npx --yes ")
+    and (tool.input_command contains "mcp"
+         or tool.input_command contains "skill"
+         or tool.input_command contains "plugin"
+         or tool.input_command contains "modelcontextprotocol"
+         or tool.input_command contains "@anthropic"
+         or tool.input_command contains "@openai"
+         or tool.input_command contains "@google")
+
+# ---------------------------------------------------------------------------
+# Rules 7–9: Skill content and auto-accept installation
+# ---------------------------------------------------------------------------
+
+- rule: Deny skill command file with IOC domain in content
+  desc: >
+    Blocks writing a skill or slash command file (under .claude/commands/) whose
+    content references a known malicious code-hosting domain. Claude reads skill
+    files as prompt context and follows their instructions — a skill that directs
+    Claude to "fetch from pastebin.com and execute" will do exactly that on the
+    next invocation. This converts the catch-all ask rule (Rule 5) to a hard deny
+    for file content that conclusively indicates a supply chain attack. IOC domains
+    are confirmed from the ClawHavoc campaign (341 malicious skills, 2024-2025).
+  condition: >
+    tool.name in ("Write", "Edit")
+    and tool.real_file_path != ""
+    and is_skill_content_ioc
+  output: >
+    Falco blocked writing a skill file with a malicious hosting domain in its content at %tool.real_file_path
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0051_llm_prompt_injection,
+         AML.T0010_ml_supply_chain_compromise, mitre_t1546_event_triggered_execution]
+
+- rule: Deny skill command file with pipe-to-shell in content
+  desc: >
+    Blocks writing a skill or slash command file (under .claude/commands/) whose
+    content contains a pipe-to-shell pattern (| bash, | sh, bash <(...), sh <(...)).
+    Skills with embedded pipe-to-shell instructions are the skill-layer equivalent
+    of the pipe-to-shell Bash rule in threat_rules.yaml: the agent will invoke the
+    pattern as a tool call when the skill is triggered. Legitimate skills describe
+    workflows and reference tools — they do not embed direct shell pipeline execution.
+  condition: >
+    tool.name in ("Write", "Edit")
+    and tool.real_file_path != ""
+    and is_skill_pipe_bash
+  output: >
+    Falco blocked writing a skill file with a pipe-to-shell pattern in its content at %tool.real_file_path
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0051_llm_prompt_injection,
+         AML.T0043_craft_adversarial_data, mitre_t1546_event_triggered_execution]
+
+- rule: Ask before npx auto-accept MCP or skill installation
+  desc: >
+    Requires user confirmation when npx is invoked with the -y or --yes flag
+    combined with an MCP server, skill, or plugin package name. The auto-accept
+    flag silently bypasses npm's "install this package?" confirmation prompt,
+    removing the human review step before the package executes. The existing
+    untrusted-host rule (R14 in threat_rules.yaml) only blocks IOC domains;
+    this rule fires regardless of source since silent installation of any
+    agent-extending package warrants explicit approval.
+  condition: tool.name = "Bash" and is_npx_auto_accept_mcp_skill
+  output: >
+    Falco requires confirmation before auto-accepting npx package installation for an MCP server or skill (%tool.input_command)
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask, AML.T0048_llm_plugin_compromise,
+         AML.T0010_ml_supply_chain_compromise, mitre_t1059_command_and_scripting_interpreter]
