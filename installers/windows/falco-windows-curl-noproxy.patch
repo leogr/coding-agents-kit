@@ -1,0 +1,17 @@
+diff --git a/userspace/falco/outputs_http.cpp b/userspace/falco/outputs_http.cpp
+index 0023756..b1c2d3e 100644
+--- a/userspace/falco/outputs_http.cpp
++++ b/userspace/falco/outputs_http.cpp
+@@ -66,6 +66,12 @@ bool falco::outputs::output_http::init(const config &oc,
+ 	CHECK_RES(curl_easy_setopt(m_curl, CURLOPT_URL, unquotedUrl.c_str()));
+
+ 	CHECK_RES(curl_easy_setopt(m_curl, CURLOPT_USERAGENT, m_oc.options["user_agent"].c_str()));
++
++#ifdef _WIN32
++	// Bypass system/environment proxy settings for localhost alert delivery.
++	CHECK_RES(curl_easy_setopt(m_curl, CURLOPT_NOPROXY, "*"));
++#endif
++
+ 	CHECK_RES(curl_easy_setopt(m_curl, CURLOPT_POSTFIELDSIZE, -1L));
+
+ 	if(m_oc.options["insecure"] == std::string("true")) {

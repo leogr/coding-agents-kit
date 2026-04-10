@@ -1,0 +1,66 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b678374..a1b2c3d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -197,6 +197,12 @@ if(NOT WIN32
+ 	include(cpp-httplib)
+ endif()
+
++# HTTP output on Windows (coding-agents-kit)
++# Bypass curl.cmake (its unconditional include(openssl) fails on Windows).
++if(WIN32)
++	find_package(CURL REQUIRED)
++endif()
++
+ include(cxxopts)
+
+ # One TBB
+diff --git a/userspace/falco/CMakeLists.txt b/userspace/falco/CMakeLists.txt
+index 5ae5b83..a1b2c3d 100644
+--- a/userspace/falco/CMakeLists.txt
++++ b/userspace/falco/CMakeLists.txt
+@@ -130,6 +130,14 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux" AND NOT MINIMAL_BUILD)
+ 	)
+ endif()
+
++# HTTP output on Windows (coding-agents-kit)
++# CURL::libcurl imported target propagates CURL_STATICLIB define and
++# transitive dependencies (crypt32, secur32, etc.) automatically.
++if(WIN32)
++	target_sources(falco_application PRIVATE outputs_http.cpp)
++	target_link_libraries(falco_application CURL::libcurl ws2_32)
++	target_compile_definitions(falco_application PRIVATE HAS_HTTP_OUTPUT)
++endif()
++
+ if(EMSCRIPTEN)
+ 	target_compile_options(falco_application PRIVATE "-sDISABLE_EXCEPTION_CATCHING=0")
+ endif()
+diff --git a/userspace/falco/falco_outputs.cpp b/userspace/falco/falco_outputs.cpp
+index 0023756..765f0ab 100644
+--- a/userspace/falco/falco_outputs.cpp
++++ b/userspace/falco/falco_outputs.cpp
+@@ -36,6 +36,10 @@ limitations under the License.
+ #include "outputs_http.h"
+ #include "outputs_grpc.h"
+ #endif
++#if defined(HAS_HTTP_OUTPUT) && defined(MINIMAL_BUILD)
++#include "outputs_http.h"
++#include <curl/curl.h>
++#endif
+
+ static const char *s_internal_source = "internal";
+
+@@ -104,6 +108,13 @@ void falco_outputs::add_output(const falco::outputs::config &oc) {
+ 	} else if(oc.name == "grpc") {
+ 		oo = std::make_unique<falco::outputs::output_grpc>();
+ 	}
++#endif
++#if defined(HAS_HTTP_OUTPUT) && defined(MINIMAL_BUILD)
++	else if(oc.name == "http") {
++		// Explicit init required on Windows for thread-safe Winsock setup.
++		curl_global_init(CURL_GLOBAL_DEFAULT);
++		oo = std::make_unique<falco::outputs::output_http>();
++	}
+ #endif
+ 	else {
+ 		throw falco_exception("Output not supported: " + oc.name);
