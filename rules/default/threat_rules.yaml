@@ -38,6 +38,14 @@
     or tool.input_command contains "|zsh"
     or tool.input_command contains "bash <("
     or tool.input_command contains "sh <("
+    or tool.input_command contains "| /bin/bash"
+    or tool.input_command contains "|/bin/bash"
+    or tool.input_command contains "| /bin/sh"
+    or tool.input_command contains "|/bin/sh"
+    or tool.input_command contains "| /usr/bin/bash"
+    or tool.input_command contains "|/usr/bin/bash"
+    or tool.input_command contains "| /usr/bin/sh"
+    or tool.input_command contains "|/usr/bin/sh"
 
 - macro: is_encoded_exec
   condition: >
@@ -50,6 +58,9 @@
     or tool.input_command contains "python -c"
     or tool.input_command contains "perl -e"
     or tool.input_command contains "ruby -e"
+    or tool.input_command contains "node -e"
+    or tool.input_command contains "node --eval"
+    or tool.input_command contains "php -r"
 
 - macro: is_curl_exfil
   condition: >
@@ -69,6 +80,7 @@
   condition: >
     tool.input_command contains "rm -rf"
     or tool.input_command contains "rm -fr"
+    or tool.input_command contains "rm --recursive"
     or tool.input_command contains "sudo rm"
     or tool.input_command contains "sudo su"
     or tool.input_command contains "sudo -i"
@@ -100,6 +112,40 @@
   condition: is_bash and references_credential
   output: >
     Falco blocked a Bash command referencing a credential path or secret token (%tool.input_command)
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny]
+
+# Matches Read tool calls targeting credential file paths.
+# Uses real_file_path (canonicalized) so symlinked paths are also covered.
+# The Bash credential rule covers tool.input_command; this covers tool.real_file_path
+# for direct Read calls — closing the gap where the agent bypasses Bash entirely
+# by using the Read tool to exfiltrate secrets.
+- macro: is_read_credential_path
+  condition: >
+    tool.name = "Read"
+    and tool.real_file_path != ""
+    and (tool.real_file_path contains "/.aws/credentials"
+         or tool.real_file_path contains "/.aws/config"
+         or tool.real_file_path contains "/.ssh/id_rsa"
+         or tool.real_file_path contains "/.ssh/id_ed25519"
+         or tool.real_file_path contains "/.ssh/id_ecdsa"
+         or tool.real_file_path contains "/.gnupg/"
+         or tool.real_file_path contains "/.netrc"
+         or tool.real_file_path contains "/.docker/config.json")
+
+- rule: Deny credential file access via Read tool
+  desc: >
+    Blocks Read tool calls targeting well-known credential file paths:
+    ~/.aws/credentials, ~/.aws/config, ~/.ssh/id_* private keys, ~/.gnupg/,
+    ~/.netrc, and ~/.docker/config.json. The Bash credential rule only inspects
+    tool.input_command and misses direct Read calls entirely — an agent can
+    Read ~/.aws/credentials without executing a shell command. Credential file
+    reads have no legitimate use in a coding workflow; any access warrants an
+    immediate block.
+  condition: is_read_credential_path
+  output: >
+    Falco blocked the Read tool accessing a credential file at %tool.real_file_path
   priority: CRITICAL
   source: coding_agent
   tags: [coding_agent_deny]
@@ -216,13 +262,22 @@
 
 # R2: curl/wget targeting cloud instance metadata endpoints.
 # Covers the GET case not caught by is_curl_exfil (which requires POST/upload flags).
+# AWS IMDS 169.254.169.254 can be encoded as:
+#   Decimal: 2852039166   (169*16777216 + 254*65536 + 169*256 + 254)
+#   Hex:     0xa9fea9fe
+#   Octal:   0251.0376.0251.0376
+# These numeric forms resolve identically in curl/wget but bypass the literal check.
 - macro: is_imds_access
   condition: >
     (tool.input_command contains "curl " or tool.input_command contains "wget ")
     and (tool.input_command contains "169.254.169.254"
          or tool.input_command contains "metadata.google.internal"
          or tool.input_command contains "metadata.azure.com"
-         or tool.input_command contains "fd00:ec2::254")
+         or tool.input_command contains "fd00:ec2::254"
+         or tool.input_command contains "2852039166"
+         or tool.input_command contains "0xa9fea9fe"
+         or tool.input_command contains "0Xa9fea9fe"
+         or tool.input_command contains "0251.0376.0251.0376")
 
 # R3: Archive commands that include credential directories in their paths.
 - macro: is_credential_archive
