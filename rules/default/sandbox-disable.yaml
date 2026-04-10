@@ -1,0 +1,335 @@
+# Sandbox disable detection rules for AI coding agents.
+# Detects prompt injection attacks directing agents to disable their own
+# OS-level sandbox isolation, and per-command sandbox escape requests.
+#
+# Placed in rules/default/ as part of the default ruleset.
+#
+# Coverage:
+#   Rule A (DENY):  Agent writing sandbox-disable content to its own config file
+#                   — Claude Code (sandbox.enabled: false/0 in settings.json or
+#                     settings.local.json), Codex (danger-full-access in config.toml),
+#                     Gemini CLI (tools.sandbox: false/none/disabled in settings.json)
+#   Rule B (ASK):   Claude Code per-command escape via dangerouslyDisableSandbox
+#                   Bash tool parameter — the ONLY layer that can detect this
+#                   since it is a tool call parameter invisible to Falco syscalls.
+#   Rule C (DENY):  Bash command writing sandbox-disable content to an agent
+#                   settings file — catches echo/python/tee/cat redirection that
+#                   bypasses the Write/Edit tool check entirely.
+#   Rule D (DENY):  Codex CLI startup sandbox bypass flags via Bash
+#                   — --dangerously-bypass-approvals-and-sandbox, --sandbox danger-full-access
+#   Rule E (DENY):  GEMINI_SANDBOX environment variable set to a disabling value
+#                   — env var disable bypasses file writes and dangerouslyDisableSandbox
+#
+# Bypass techniques closed by the hardened macros:
+#   - Edit value-only diff: "enabled":true → "enabled":false without "sandbox" in diff
+#     → is_sandbox_disable_value_change catches "enabled" + "false" on sandbox config files
+#   - Numeric zero: "enabled": 0 (JS falsy) instead of boolean false
+#     → is_sandbox_disable_value_zero catches "enabled" + ":0" / ": 0"
+#   - settings.local.json not in original path list
+#     → is_agent_sandbox_config now includes "/.claude/settings.local.json"
+#   - Gemini "sandbox":"none" / "disabled" string values
+#     → is_sandbox_disable_gemini_string catches "sandbox" + "none" / "disabled"
+#   - Bash write (echo >, tee, python3 open): bypasses Write/Edit rule
+#     → Rule C adds Bash + settings path + sandbox-disable content check
+#   - Codex CLI flags (--dangerously-bypass-approvals-and-sandbox, --sandbox danger-full-access)
+#     → Rule D covers Codex startup bypass flags
+#   - GEMINI_SANDBOX=none/false/disabled env var: invisible to file-write rules
+#     → Rule E covers the Gemini env var disable path
+#
+# Known gaps (not detectable via tool call inspection):
+#   - Unicode escape sequences in JSON keys: "s\u0061ndbox" parses to "sandbox" at
+#     runtime but the raw tool.input string contains \u0061, not a. Requires a
+#     pre-processing decode step not available in Falco condition evaluation.
+#   - Indirect/deferred writes via opaque shell scripts: if the agent writes a
+#     script that disables sandbox and then executes it, the write event contains
+#     no sandbox keywords. Covered partially by the tmp-staging rules in threat_rules.yaml.
+#
+# Official sandbox docs:
+#   Claude Code : https://code.claude.com/docs/sandboxing
+#   Codex       : https://developers.openai.com/codex/concepts/sandboxing
+#   Gemini CLI  : https://geminicli.com/docs/cli/sandbox/
+
+# ---------------------------------------------------------------------------
+# Macros: file path matching
+# ---------------------------------------------------------------------------
+
+# Matches agent sandbox configuration file paths.
+# Uses endswith on tool.real_file_path (canonicalized, absolute path).
+# HARDENED: includes settings.local.json (same schema as settings.json,
+# loaded by Claude Code with equal priority — original rule missed this path).
+- macro: is_agent_sandbox_config
+  condition: >
+    tool.real_file_path endswith "/.claude/settings.json"
+    or tool.real_file_path endswith "/.claude/settings.local.json"
+    or tool.real_file_path endswith "/.codex/config.toml"
+    or tool.real_file_path endswith "/.gemini/settings.json"
+
+# ---------------------------------------------------------------------------
+# Macros: Write/Edit content patterns (Rule A)
+# ---------------------------------------------------------------------------
+
+# Codex: sandbox_mode = "danger-full-access" in config.toml
+- macro: is_sandbox_disable_codex
+  condition: tool.input contains "danger-full-access"
+
+# Claude Code / Gemini: "sandbox": {"enabled": false} or "tools": {"sandbox": false}
+# Also catches Edit diffs where the file path contains "sandbox" in surrounding context.
+- macro: is_sandbox_disable_enabled_false
+  condition: >
+    tool.input contains "sandbox"
+    and tool.input contains "false"
+
+# Gemini: "security": {"toolSandboxing": false}
+- macro: is_sandbox_toolsandboxing_false
+  condition: >
+    tool.input contains "toolSandboxing"
+    and tool.input contains "false"
+
+# Claude Code: "allowUnsandboxedCommands": true (enables the per-command escape globally)
+- macro: is_sandbox_allow_unsandboxed
+  condition: >
+    tool.input contains "allowUnsandboxedCommands"
+    and tool.input contains "true"
+
+# HARDENED: Edit value-only diff bypass.
+# When an Edit changes "enabled":true → "enabled":false, the "sandbox" key is
+# in the surrounding file context but NOT in old_string or new_string. Since
+# tool.input for Edit contains only the diff strings, is_sandbox_disable_enabled_false
+# never fires. This macro catches the value-change alone on a sandbox config file.
+- macro: is_sandbox_disable_value_change
+  condition: >
+    tool.input contains "enabled"
+    and tool.input contains "false"
+
+# HARDENED: Numeric zero bypass.
+# JavaScript (Node.js) evaluates `if (settings.sandbox.enabled)` as falsy for
+# the integer 0. Writing "enabled": 0 bypasses rules that only check for "false".
+- macro: is_sandbox_disable_value_zero
+  condition: >
+    tool.input contains "enabled"
+    and (tool.input contains ":0" or tool.input contains ": 0")
+
+# HARDENED: Gemini string value bypass.
+# Gemini CLI accepts "sandbox": "none" and "sandbox": "disabled" to disable
+# Docker-per-tool-call isolation. These string values are not the boolean false
+# and were not caught by is_sandbox_disable_enabled_false.
+- macro: is_sandbox_disable_gemini_none
+  condition: >
+    tool.input contains "sandbox"
+    and tool.input contains "none"
+
+- macro: is_sandbox_disable_gemini_disabled
+  condition: >
+    tool.input contains "sandbox"
+    and tool.input contains "disabled"
+
+# Aggregate content condition for Rule A.
+- macro: is_sandbox_disable_content
+  condition: >
+    is_sandbox_disable_codex
+    or is_sandbox_disable_enabled_false
+    or is_sandbox_toolsandboxing_false
+    or is_sandbox_allow_unsandboxed
+    or is_sandbox_disable_value_change
+    or is_sandbox_disable_value_zero
+    or is_sandbox_disable_gemini_none
+    or is_sandbox_disable_gemini_disabled
+
+# ---------------------------------------------------------------------------
+# Macros: Bash-level path and content detection (Rules C, D, E)
+# ---------------------------------------------------------------------------
+
+# Matches Bash commands that reference an agent settings file path.
+# Covers full paths, expanduser results, $HOME expansion, and relative substrings.
+- macro: is_bash_sandbox_settings_path
+  condition: >
+    tool.input_command contains ".claude/settings.json"
+    or tool.input_command contains ".claude/settings.local.json"
+    or tool.input_command contains ".codex/config.toml"
+    or tool.input_command contains ".gemini/settings.json"
+
+# Helper macros for Bash sandbox-disable content detection.
+# Split into separate macros to avoid (A and B) inside or-chains.
+- macro: is_bash_disable_codex
+  condition: tool.input_command contains "danger-full-access"
+
+- macro: is_bash_disable_sandbox_false
+  condition: >
+    tool.input_command contains "sandbox"
+    and tool.input_command contains "false"
+
+- macro: is_bash_disable_toolsandboxing_false
+  condition: >
+    tool.input_command contains "toolSandboxing"
+    and tool.input_command contains "false"
+
+- macro: is_bash_disable_allow_unsandboxed
+  condition: >
+    tool.input_command contains "allowUnsandboxedCommands"
+    and tool.input_command contains "true"
+
+- macro: is_bash_disable_sandbox_none
+  condition: >
+    tool.input_command contains "sandbox"
+    and tool.input_command contains "none"
+
+- macro: is_bash_disable_sandbox_disabled
+  condition: >
+    tool.input_command contains "sandbox"
+    and tool.input_command contains "disabled"
+
+# Aggregate: any sandbox-disable content in a Bash command string.
+- macro: is_bash_sandbox_disable_cmd
+  condition: >
+    is_bash_disable_codex
+    or is_bash_disable_sandbox_false
+    or is_bash_disable_toolsandboxing_false
+    or is_bash_disable_allow_unsandboxed
+    or is_bash_disable_sandbox_none
+    or is_bash_disable_sandbox_disabled
+
+# Codex CLI bypass flags (Rule D).
+- macro: is_codex_bypass_flag
+  condition: tool.input_command contains "dangerously-bypass-approvals-and-sandbox"
+
+- macro: is_codex_danger_flag
+  condition: >
+    tool.input_command contains "codex"
+    and tool.input_command contains "danger-full-access"
+
+- macro: is_codex_sandbox_bypass
+  condition: >
+    is_codex_bypass_flag
+    or is_codex_danger_flag
+
+# GEMINI_SANDBOX env var bypass helpers (Rule E).
+- macro: is_gemini_env_none
+  condition: >
+    tool.input_command contains "GEMINI_SANDBOX"
+    and tool.input_command contains "none"
+
+- macro: is_gemini_env_false
+  condition: >
+    tool.input_command contains "GEMINI_SANDBOX"
+    and tool.input_command contains "false"
+
+- macro: is_gemini_env_disabled
+  condition: >
+    tool.input_command contains "GEMINI_SANDBOX"
+    and tool.input_command contains "disabled"
+
+- macro: is_gemini_sandbox_env_bypass
+  condition: >
+    is_gemini_env_none
+    or is_gemini_env_false
+    or is_gemini_env_disabled
+
+# ---------------------------------------------------------------------------
+# Rules
+# ---------------------------------------------------------------------------
+
+- rule: Deny agent writing sandbox-disable configuration
+  desc: >
+    Blocks a coding agent from writing or editing its own sandbox configuration
+    file with content that disables OS-level process isolation. Claude Code uses
+    "sandbox.enabled: false" in settings.json or settings.local.json to disable
+    bubblewrap (Linux) or Seatbelt (macOS); Codex uses "sandbox_mode =
+    danger-full-access" in config.toml to disable landlock and seccomp; Gemini
+    CLI uses "tools.sandbox: false/none/disabled" in settings.json to disable
+    Docker-per-tool-call isolation. This pattern indicates a prompt injection
+    attack (AML.T0051) directing the agent to remove its own security boundaries
+    — an LLM jailbreak (AML.T0054) enabling subsequent tool calls to run
+    unsandboxed on the host. Fires at PreToolUse, before the write executes.
+  condition: >
+    tool.name in ("Write", "Edit")
+    and tool.real_file_path != ""
+    and is_agent_sandbox_config
+    and is_sandbox_disable_content
+  output: >
+    Falco blocked %agent.name from disabling its sandbox by writing to %tool.real_file_path
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0054_llm_jailbreak, AML.T0051_llm_prompt_injection,
+         mitre_t1562.001_impair_defenses_disable_or_modify_tools]
+
+- rule: Ask before Claude Code per-command sandbox escape
+  desc: >
+    Requires user confirmation when Claude Code invokes the Bash tool with the
+    dangerouslyDisableSandbox parameter, bypassing bubblewrap for a single command.
+    This is Claude Code's built-in escape mechanism used when sandbox restrictions
+    block a failing command (e.g., Docker is incompatible with the sandbox by design).
+    While sometimes legitimate, it is also the primary vector for prompt injection
+    attacks that instruct Claude to run specific commands outside the sandbox.
+    This rule is the ONLY detection layer for this event — dangerouslyDisableSandbox
+    is a Bash tool call parameter invisible to Falco at the syscall level.
+    Uses coding_agent_ask (not deny) since legitimate uses exist.
+  condition: >
+    tool.name = "Bash"
+    and tool.input contains "dangerouslyDisableSandbox"
+  output: >
+    Falco requires confirmation before Claude Code runs an unsandboxed Bash command (%tool.input_command)
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask, AML.T0054_llm_jailbreak, AML.T0051_llm_prompt_injection,
+         mitre_t1562.001_impair_defenses_disable_or_modify_tools]
+
+- rule: Deny Bash command writing sandbox-disable content to agent settings file
+  desc: >
+    Blocks Bash commands that combine a reference to an agent sandbox settings
+    file path with sandbox-disabling content. This closes the bypass where an
+    agent uses shell redirection (echo >, tee, python3 open()) to write the same
+    sandbox-disabling payload that the Write/Edit tool rule (Rule A) would catch.
+    Since Bash is the Swiss Army knife of file writes, this rule covers the
+    entire class: echo, tee, cat heredoc, python3 -c, node -e, sed -i, etc.
+    The path check (tool.input_command contains ".claude/settings.json") anchors
+    the rule to the sandbox config files; the content check filters for the same
+    disable patterns used in Rule A.
+  condition: >
+    tool.name = "Bash"
+    and is_bash_sandbox_settings_path
+    and is_bash_sandbox_disable_cmd
+  output: >
+    Falco blocked %agent.name from disabling its sandbox via Bash command: %tool.input_command
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0054_llm_jailbreak, AML.T0051_llm_prompt_injection,
+         mitre_t1562.001_impair_defenses_disable_or_modify_tools]
+
+- rule: Deny Codex CLI sandbox bypass flag
+  desc: >
+    Blocks Bash invocations of the Codex CLI with flags that bypass sandbox
+    isolation. "--dangerously-bypass-approvals-and-sandbox" disables all
+    landlock/seccomp enforcement and approval prompts. "--sandbox danger-full-access"
+    starts Codex in danger-full-access mode, granting unrestricted filesystem and
+    network access. Neither of these involves a file write — they are startup flags
+    that configure the Codex sandbox at process initialization, invisible to Rule A.
+    Fires at PreToolUse before the Codex process starts.
+  condition: >
+    tool.name = "Bash"
+    and is_codex_sandbox_bypass
+  output: >
+    Falco blocked %agent.name from starting Codex with a sandbox bypass flag (%tool.input_command)
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0054_llm_jailbreak, AML.T0051_llm_prompt_injection,
+         mitre_t1562.001_impair_defenses_disable_or_modify_tools]
+
+- rule: Deny Gemini CLI sandbox disable via environment variable
+  desc: >
+    Blocks Bash commands that set GEMINI_SANDBOX to a disabling value (none,
+    false, disabled) before invoking Gemini CLI. Gemini reads GEMINI_SANDBOX at
+    startup to select its sandbox backend — setting it to a non-Docker/Podman
+    value disables Docker-per-tool-call isolation without writing any settings
+    file. This vector bypasses Rule A entirely (no file write) and is not covered
+    by Rule B (no dangerouslyDisableSandbox parameter). Inline env assignment
+    (GEMINI_SANDBOX=none gemini) and exported assignment (export GEMINI_SANDBOX=none)
+    are both caught via the tool.input_command string.
+  condition: >
+    tool.name = "Bash"
+    and is_gemini_sandbox_env_bypass
+  output: >
+    Falco blocked %agent.name from disabling Gemini sandbox via environment variable (%tool.input_command)
+  priority: CRITICAL
+  source: coding_agent
+  tags: [coding_agent_deny, AML.T0054_llm_jailbreak, AML.T0051_llm_prompt_injection,
+         mitre_t1562.001_impair_defenses_disable_or_modify_tools]
