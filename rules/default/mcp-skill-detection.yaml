@@ -27,8 +27,10 @@
 #                   — skill instructs Claude to fetch from a ClawHavoc campaign host
 #   Rule 8 (DENY):  Skill/command file written with pipe-to-shell in content
 #                   — skill embeds | bash / curl | sh for direct command execution
-#   Rule 9 (ASK):   npx -y auto-accept MCP/skill installation
-#                   — -y flag silently bypasses npm package install confirmation
+#   Rule 9 (ASK):   npx -y / bunx -y / yarn dlx / pnpm dlx auto-accept installation
+#                   — -y flag (or always-non-interactive runner) bypasses install confirmation
+#   Rule 10 (ASK):  Bash tool writing to .claude/commands/
+#                   — shell redirection bypasses the Write/Edit filter in Rule 5
 #
 # IOC domains: ClawHavoc campaign (341 malicious skills, 2024-2025):
 #   pastebin.com, transfer.sh, file.io, termbin.com, ix.io, glot.io,
@@ -58,11 +60,19 @@
 # rule already restricts to .mcp.json / managed-mcp.json files, checking for
 # temp paths anywhere in the content is specific enough: no legitimate MCP
 # server config has a /tmp path in any field.
+# $TMPDIR / $TMP / $TEMP are env var forms that expand to temp paths at runtime
+# but contain no literal /tmp/ — they are added to close the env-var bypass.
+# /run/user/ is the per-user runtime directory (XDG_RUNTIME_DIR), world-writable
+# by the owning user and used as a staging area equivalent to /tmp.
 - macro: is_mcp_command_temp
   condition: >
     tool.input contains "/tmp/"
     or tool.input contains "/dev/shm/"
     or tool.input contains "/var/tmp/"
+    or tool.input contains "$TMPDIR"
+    or tool.input contains "$TMP"
+    or tool.input contains "$TEMP"
+    or tool.input contains "/run/user/"
 
 # Matches MCP config content referencing a known malicious code-hosting domain
 # (ClawHavoc campaign IOCs). The "url": key prefix check is omitted for the
@@ -237,6 +247,8 @@
 # Matches Write/Edit to .claude/commands/ where the file content contains a
 # pipe-to-shell pattern. Skills embedding these patterns instruct Claude to
 # execute remote content directly through a shell interpreter.
+# Absolute paths (| /bin/bash, | /bin/sh, | /usr/bin/bash, | /usr/bin/sh) are
+# functionally identical to the short form but bypass simple string matches.
 # Helper macros avoid (A and B) terms inside an or-chain.
 - macro: is_skill_pipe_bash
   condition: >
@@ -246,20 +258,36 @@
          or tool.input contains "| sh"
          or tool.input contains "|sh"
          or tool.input contains "bash <("
-         or tool.input contains "sh <(")
+         or tool.input contains "sh <("
+         or tool.input contains "| /bin/bash"
+         or tool.input contains "|/bin/bash"
+         or tool.input contains "| /bin/sh"
+         or tool.input contains "|/bin/sh"
+         or tool.input contains "| /usr/bin/bash"
+         or tool.input contains "|/usr/bin/bash"
+         or tool.input contains "| /usr/bin/sh"
+         or tool.input contains "|/usr/bin/sh")
 
 # ---------------------------------------------------------------------------
 # npx auto-accept macro (Rule 9)
 # ---------------------------------------------------------------------------
 
-# Matches npx invocations that bypass npm's installation confirmation with -y
-# or --yes. The auto-accept flag combined with an MCP or skill package name
-# silently installs an unreviewed package. The existing untrusted-host rule
-# (R14 in threat_rules.yaml) requires an IOC domain; this covers any source.
+# Matches package runner invocations that bypass installation confirmation with
+# -y / --yes, or are always non-interactive by design (yarn dlx, pnpm dlx).
+# Covers npx (npm), bunx (Bun), yarn dlx (yarn v2), and pnpm dlx (pnpm) — all
+# functionally equivalent for MCP/skill package installation.
+# yarn dlx is always non-interactive and requires no -y flag.
+# pnpm dlx requires -y for auto-accept similar to npx.
+# The existing untrusted-host rule (R14 in threat_rules.yaml) requires an IOC
+# domain; this covers any source.
 - macro: is_npx_auto_accept_mcp_skill
   condition: >
     (tool.input_command contains "npx -y "
-     or tool.input_command contains "npx --yes ")
+     or tool.input_command contains "npx --yes "
+     or tool.input_command contains "bunx -y "
+     or tool.input_command contains "bunx --yes "
+     or tool.input_command contains "yarn dlx "
+     or tool.input_command contains "pnpm dlx ")
     and (tool.input_command contains "mcp"
          or tool.input_command contains "skill"
          or tool.input_command contains "plugin"
@@ -313,17 +341,49 @@
 
 - rule: Ask before npx auto-accept MCP or skill installation
   desc: >
-    Requires user confirmation when npx is invoked with the -y or --yes flag
+    Requires user confirmation when npx, bunx, yarn dlx, or pnpm dlx is invoked
+    with the -y / --yes flag (or is always non-interactive, as with yarn dlx)
     combined with an MCP server, skill, or plugin package name. The auto-accept
-    flag silently bypasses npm's "install this package?" confirmation prompt,
+    flag silently bypasses the "install this package?" confirmation prompt,
     removing the human review step before the package executes. The existing
     untrusted-host rule (R14 in threat_rules.yaml) only blocks IOC domains;
     this rule fires regardless of source since silent installation of any
     agent-extending package warrants explicit approval.
   condition: tool.name = "Bash" and is_npx_auto_accept_mcp_skill
   output: >
-    Falco requires confirmation before auto-accepting npx package installation for an MCP server or skill (%tool.input_command)
+    Falco requires confirmation before auto-accepting package installation for an MCP server or skill (%tool.input_command)
   priority: WARNING
   source: coding_agent
   tags: [coding_agent_ask, AML.T0048_llm_plugin_compromise,
          AML.T0010_ml_supply_chain_compromise, mitre_t1059_command_and_scripting_interpreter]
+
+# ---------------------------------------------------------------------------
+# Rule 10: Bash writes to .claude/commands/
+# ---------------------------------------------------------------------------
+
+# Matches Bash commands that reference the Claude commands directory in a way
+# that could write new skill files via shell redirection (echo >, tee, cat >).
+# Rule 5 catches Write/Edit tool calls to this path; an attacker using the Bash
+# tool with shell redirection bypasses that check entirely.
+- macro: is_bash_commands_write
+  condition: >
+    tool.name = "Bash"
+    and tool.input_command contains "/.claude/commands/"
+
+- rule: Ask before Bash command writing to Claude slash command directory
+  desc: >
+    Requires user confirmation when a Bash command references the .claude/commands/
+    directory. Shell redirections (echo >, tee, cat >) can write new slash command
+    files without using the Write or Edit tools, bypassing Rule 5. Slash command
+    files persist across sessions and execute arbitrary shell on invocation — any
+    Bash-level write to this directory warrants explicit approval. Read-only access
+    (ls, cat, grep) is flagged as well since reconnoitering the commands directory
+    is a precursor to targeted injection. Asks rather than denies because legitimate
+    maintenance tasks (listing commands, reading existing ones) also match.
+  condition: is_bash_commands_write
+  output: >
+    Falco requires confirmation before a Bash command accesses the Claude slash command directory (%tool.input_command)
+  priority: WARNING
+  source: coding_agent
+  tags: [coding_agent_ask, AML.T0051_llm_prompt_injection,
+         AML.T0043_craft_adversarial_data, mitre_t1546_event_triggered_execution]
