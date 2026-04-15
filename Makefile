@@ -5,9 +5,12 @@ ARCH := $(shell uname -m)
 .PHONY: all build build-interceptor build-plugin build-ctl \
 	download-falco-linux falco-linux-bin-dir \
 	falco-macos falco-macos-bin-dir \
+	falco-windows \
 	test test-interceptor test-e2e \
+	test-interceptor-windows test-e2e-windows \
 	linux linux-x86_64 linux-aarch64 \
 	macos macos-aarch64 macos-x86_64 macos-universal \
+	windows windows-x64 windows-arm64 \
 	clean help
 
 all: linux
@@ -86,6 +89,29 @@ falco-macos:
 falco-macos-bin-dir:
 	@echo "build/falco-$(FALCO_VERSION)-darwin-$(subst arm64,aarch64,$(ARCH))"
 
+## Build Windows packages (must run on Windows)
+windows: windows-x64
+
+## Build Windows x64 MSI package
+windows-x64:
+	powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/package.ps1 -Arch x64
+
+## Build Windows arm64 MSI package
+windows-arm64:
+	powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/package.ps1 -Arch arm64
+
+## Build Falco from source for Windows (requires vcpkg + MSVC)
+falco-windows:
+	powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/build-falco.ps1
+
+## Run interceptor unit tests on Windows
+test-interceptor-windows:
+	powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_interceptor_windows.ps1
+
+## Run end-to-end tests on Windows
+test-e2e-windows:
+	powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_e2e_windows.ps1
+
 ## Remove build artifacts
 clean:
 	rm -rf build/
@@ -107,12 +133,15 @@ help:
 	@echo "  test               Run all tests"
 	@echo "  test-interceptor   Run interceptor unit tests"
 	@echo "  test-e2e           Run end-to-end tests (requires Falco in PATH)"
+	@echo "  test-interceptor-windows  Run interceptor tests on Windows"
+	@echo "  test-e2e-windows          Run e2e tests on Windows"
 	@echo ""
 	@echo "Falco:"
 	@echo "  download-falco-linux  Download pre-built Falco binary (Linux only)"
 	@echo "  falco-linux-bin-dir   Print path to downloaded Falco binary directory"
 	@echo "  falco-macos           Build Falco from source (macOS only)"
 	@echo "  falco-macos-bin-dir   Print path to built Falco binary directory"
+	@echo "  falco-windows         Build Falco from source (Windows only)"
 	@echo ""
 	@echo "Package:"
 	@echo "  linux              Build Linux packages for all architectures (default)"
@@ -122,6 +151,9 @@ help:
 	@echo "  macos-aarch64      Build macOS Apple Silicon package"
 	@echo "  macos-x86_64       Build macOS Intel package (must run on Intel Mac)"
 	@echo "  macos-universal    Build macOS universal binary (requires Rosetta + x86_64 Homebrew)"
+	@echo "  windows            Build Windows x64 MSI package (default)"
+	@echo "  windows-x64        Build Windows x64 MSI package"
+	@echo "  windows-arm64      Build Windows arm64 MSI package"
 	@echo ""
 	@echo "Other:"
 	@echo "  clean              Remove all build artifacts"
