@@ -42,13 +42,10 @@ claude-interceptor.exe ──Unix socket──▶ Plugin broker (in Falco)
 
 ### http_output on Windows
 
-Falco's upstream build excludes `http_output` on Windows (CMake and preprocessor guards). The `falco-windows-http-output.patch` enables it using the same `HAS_HTTP_OUTPUT` pattern as the macOS patch. System curl is provided via vcpkg with SChannel backend (no OpenSSL dependency).
+Falco's upstream build excludes `http_output` on Windows (CMake and preprocessor guards). A single patch (`falco-windows-http-output.patch`) enables it using the same `HAS_HTTP_OUTPUT` pattern as the macOS patch. System curl is provided via vcpkg with SChannel backend (no OpenSSL dependency). The patch also handles SChannel-specific curl limitations:
 
-A second patch (`falco-windows-curl-noproxy.patch`) handles two SChannel-specific curl limitations:
-
-1. **NOPROXY**: Adds `CURLOPT_NOPROXY="*"` to bypass system/environment proxy settings for localhost alert delivery. Tolerates `CURLE_NOT_BUILT_IN` because the SChannel curl backend may omit proxy support — if proxy support is absent there is no proxy to bypass anyway.
-
-2. **CA path**: Wraps the CA certificate path/bundle options in a Windows-specific block that tolerates `CURLE_NOT_BUILT_IN`. SChannel uses the Windows Certificate Store automatically and does not support `CURLOPT_CAPATH` / `CURLOPT_CAINFO`. The original `CHECK_RES` macro would propagate this error and prevent `http_output` from initializing. For plain HTTP delivery to localhost no CA verification is needed regardless.
+- **NOPROXY**: Adds `CURLOPT_NOPROXY="*"` to bypass system/environment proxy settings for localhost alert delivery. Tolerates `CURLE_NOT_BUILT_IN` because the SChannel curl backend may omit proxy support.
+- **CA path**: Wraps the CA certificate path/bundle options in a Windows-specific block that tolerates `CURLE_NOT_BUILT_IN`. SChannel uses the Windows Certificate Store automatically and does not support `CURLOPT_CAPATH` / `CURLOPT_CAINFO`.
 
 ## Prerequisites
 

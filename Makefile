@@ -5,7 +5,7 @@ ARCH := $(shell uname -m)
 .PHONY: all build build-interceptor build-plugin build-ctl \
 	download-falco-linux falco-linux-bin-dir \
 	falco-macos falco-macos-bin-dir \
-	falco-windows \
+	falco-windows falco-windows-x64 falco-windows-arm64 \
 	test test-interceptor test-e2e \
 	test-interceptor-windows test-e2e-windows \
 	linux linux-x86_64 linux-aarch64 \
@@ -100,9 +100,16 @@ windows-x64:
 windows-arm64:
 	powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/package.ps1 -Arch arm64
 
-## Build Falco from source for Windows (requires vcpkg + MSVC)
-falco-windows:
-	powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/build-falco.ps1
+## Build Falco from source for Windows (default: x64; requires vcpkg + MSVC)
+falco-windows: falco-windows-x64
+
+## Build Falco from source for Windows x64
+falco-windows-x64:
+	powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/build-falco.ps1 -Arch x64
+
+## Build Falco from source for Windows arm64
+falco-windows-arm64:
+	powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/build-falco.ps1 -Arch arm64
 
 ## Run interceptor unit tests on Windows
 test-interceptor-windows:
@@ -141,7 +148,9 @@ help:
 	@echo "  falco-linux-bin-dir   Print path to downloaded Falco binary directory"
 	@echo "  falco-macos           Build Falco from source (macOS only)"
 	@echo "  falco-macos-bin-dir   Print path to built Falco binary directory"
-	@echo "  falco-windows         Build Falco from source (Windows only)"
+	@echo "  falco-windows         Build Falco from source for Windows (default: x64)"
+	@echo "  falco-windows-x64    Build Falco from source for Windows x64"
+	@echo "  falco-windows-arm64  Build Falco from source for Windows arm64"
 	@echo ""
 	@echo "Package:"
 	@echo "  linux              Build Linux packages for all architectures (default)"

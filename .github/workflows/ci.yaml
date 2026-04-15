@@ -74,6 +74,64 @@ jobs:
       - name: Run e2e tests
         run: make test-e2e
 
+  build-test-windows:
+    name: Build & Test (Windows ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            vcpkg_triplet: x64-windows-static
+          - arch: arm64
+            runner: windows-11-arm
+            vcpkg_triplet: arm64-windows-static
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install make
+        run: choco install make -y
+
+      - name: Install vcpkg curl
+        run: vcpkg install curl:${{ matrix.vcpkg_triplet }}
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            hooks/claude-code/target
+            plugins/coding-agent-plugin/target
+            tools/coding-agents-kit-ctl/target
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-
+
+      - name: Cache Falco build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/falco-*-windows-*
+            build/falco-src-*
+          key: falco-windows-${{ matrix.arch }}-${{ hashFiles('installers/windows/build-falco.ps1', 'installers/windows/falco-windows-*.patch') }}
+
+      - name: Build
+        run: make build
+
+      - name: Build Falco from source
+        run: make falco-windows-${{ matrix.arch }}
+
+      - name: Run interceptor tests
+        run: make test-interceptor-windows
+
+      - name: Run e2e tests
+        run: make test-e2e-windows
+
   build-test-macos:
     name: Build & Test (macOS ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
