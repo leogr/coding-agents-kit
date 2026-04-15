@@ -301,12 +301,14 @@ Requires latest stable Rust (the falco_plugin SDK tracks latest stable as MSRV).
 ### Tests
 
 ```bash
-make test                   # Run all tests
+make test                   # Run all tests (Linux/macOS)
 make test-interceptor       # Interceptor unit tests (mock broker, no Falco needed)
 make test-e2e               # E2E tests (requires Falco in PATH, plugin, and interceptor built)
+make test-interceptor-windows  # Interceptor unit tests on Windows
+make test-e2e-windows          # E2E tests on Windows
 ```
 
-On Linux, use `make download-falco-linux` to download pre-built Falco binaries and `make falco-linux-bin-dir` to get the binary path. On macOS, use `make falco-macos` to build from source.
+On Linux, use `make download-falco-linux` to download pre-built Falco binaries and `make falco-linux-bin-dir` to get the binary path. On macOS, use `make falco-macos` to build from source. On Windows, use `make falco-windows` to build from source (requires vcpkg + MSVC).
 
 ### Packaging
 
@@ -320,6 +322,11 @@ make macos-aarch64          # Apple Silicon
 make macos-x86_64           # Intel (must run on Intel Mac)
 make macos-universal        # Fat binary (requires Rosetta + x86_64 Homebrew)
 make falco-macos            # Build only Falco (convenience target)
+
+# Windows (builds Falco from source, requires vcpkg + MSVC + WiX)
+make windows-x64            # x64 MSI package
+make windows-arm64          # arm64 MSI package
+make falco-windows          # Build only Falco (convenience target)
 ```
 
 ### Environment Variables
