@@ -116,9 +116,10 @@ start_falco() {
     local mode="${1:-enforcement}"
     stop_falco
     rm -f "$SOCK"
-    # Use inline config overrides so the test does not depend on an installed
-    # config at ~/.coding-agents-kit/. This makes the test self-contained.
-    falco \
+    # Use an empty config file with inline overrides so the test does not
+    # depend on any installed config. Without -c, Falco looks for
+    # /etc/falco/falco.yaml and fails if it doesn't exist.
+    falco -c "$SCRIPT_DIR/falco.yaml" \
         -o "engine.kind=nodriver" \
         -o "config_files=" \
         -o "plugins[0].name=coding_agent" \

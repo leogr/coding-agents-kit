@@ -1,0 +1,2 @@
+# Empty Falco config for tests.
+# All settings are provided via -o overrides on the command line.

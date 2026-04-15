@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  FALCO_VERSION: "0.43.0"
+
+jobs:
+  build-test-linux:
+    name: Build & Test (Linux ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            hooks/claude-code/target
+            plugins/coding-agent-plugin/target
+            tools/coding-agents-kit-ctl/target
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-cargo-
+
+      - name: Build interceptor
+        run: cargo build --release
+        working-directory: hooks/claude-code
+
+      - name: Build plugin
+        run: cargo build --release
+        working-directory: plugins/coding-agent-plugin
+
+      - name: Build ctl
+        run: cargo build --release
+        working-directory: tools/coding-agents-kit-ctl
+
+      - name: Download Falco
+        run: |
+          mkdir -p build
+          curl -fSL -o build/falco.tar.gz \
+            "https://download.falco.org/packages/bin/${{ matrix.arch }}/falco-${FALCO_VERSION}-${{ matrix.arch }}.tar.gz"
+          tar xzf build/falco.tar.gz -C build/
+          echo "${PWD}/build/falco-${FALCO_VERSION}-${{ matrix.arch }}/usr/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Falco
+        run: falco --version
+
+      - name: Run interceptor tests
+        run: bash tests/test_interceptor.sh
+
+      - name: Run e2e tests
+        run: bash tests/test_e2e.sh
