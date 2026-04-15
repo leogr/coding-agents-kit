@@ -12,13 +12,13 @@
 
 [![asciicast](demo.gif)](https://asciinema.org/a/lXqokxXVO4Q3IH3W)
 
-**coding-agents-kit** brings [Falco](https://falco.org) to the world of AI coding agents. It is designed for developers who use coding agents daily and want visibility and control over what those agents do on their machines.
+**coding-agents-kit** brings [Falco](https://falco.org) to the world of AI coding agents. It is designed for developers who use coding agents daily and want visibility, auditability, and pre-execution guardrails for what those agents do on their machines.
 
 True to Falco's tradition, the primary goal is **detection**. The kit provides a **monitor mode** that lets you observe every tool call your coding agent makes — shell commands, file writes, reads, API calls — in real time, evaluated against [Falco rules](https://falco.org/docs/rules/) you define. This gives you a clear picture of what the agent is actually doing during a session.
 
 Unlike classic Falco, this project operates entirely in user space — no kernel modules, no root, no containers. This makes it easy to run on your development machine but comes with [known limitations](#known-limitations): Falco evaluates tool calls as declared by the agent, not the system calls those commands produce.
 
-That said, detecting unwanted behavior is still valuable — even at the tool-call level, it helps you catch the unexpected. The kit also provides a lightweight **enforcement mode** that relies on the coding agent's own hook API to block or prompt for confirmation. Think of it as a way to let Falco instruct the agent to behave as expected and avoid potentially harmful behaviors. This is not a substitute for sandboxing or system hardening — it complements those techniques by adding a policy layer at the agent level.
+That said, detecting unwanted behavior is still valuable — even at the tool-call level, it helps you catch the unexpected. The kit also provides a **guardrail-style enforcement mode** that relies on the coding agent's own hook API to block or prompt for confirmation before execution. This is strongest when the agent uses structured tools such as file reads and writes, and weaker for generic execution paths such as shell commands or external MCP servers. It is not a substitute for sandboxing, containment, or system hardening — it complements those techniques by adding a policy layer at the agent level.
 
 Ultimately, **coding-agents-kit** is a new way to let Falco and coding agents collaborate, and a foundation for exploring new approaches to protecting your systems against AI-driven threats.
 
@@ -33,6 +33,14 @@ When your coding agent tries to use a tool, **coding-agents-kit** intercepts the
 | **Ask** | You are prompted to approve or reject the call |
 
 Security policies are written as standard [Falco rules](https://falco.org/docs/rules/) in YAML. You get a set of sensible defaults out of the box, and you can add your own rules for your specific needs.
+
+`Monitor` mode is useful on its own for visibility, auditing, and tuning rules. `Enforcement` mode adds meaningful friction and policy control before execution, especially for structured file operations and obviously risky actions, but it should be treated as a guardrail layer rather than a hard security boundary.
+
+## When It Makes Sense
+
+- Good fit when you want to see what the agent is trying to do, add prompts or denials around risky actions, and enforce clear file-access boundaries.
+- Best used alongside sandboxing, system hardening, least-privilege environments, or other containment mechanisms.
+- Not the right tool if you need guarantees about what allowed shell commands, scripts, binaries, or MCP servers will do at runtime.
 
 ## Quick Start
 
@@ -265,7 +273,13 @@ For design decisions, component specs, and full architectural documentation, see
 
 This means that if a coding agent embeds harmful logic in a source file, compiles it, and then runs the resulting binary, Falco can inspect the compile and run commands but cannot analyze what the compiled program actually does at runtime. The rules see `gcc main.c -o main` and `./main`, not the system calls that `./main` makes.
 
-This is inherent to the hook-based approach: Falco evaluates tool calls as declared by the agent, not the actions those tool calls perform at the OS level. For deeper visibility — detecting what processes actually do at the syscall level — Falco's kernel instrumentation (eBPF/kmod) is the right tool (at least for Linux).
+Coverage is therefore asymmetric:
+
+- Strongest for structured tools such as `Write`, `Edit`, and `Read`, where the agent exposes first-class file semantics.
+- Weaker for generic tools such as `Bash`, where rules evaluate the declared command rather than fully resolved shell behavior.
+- Input-side only for external systems such as MCP, where the kit can inspect the requested call but not the side effects the MCP server later performs.
+
+In practice, this means enforcement mode can block many unsafe or out-of-policy tool calls, but it is not OS-level containment and should not be treated as a hard boundary. For deeper visibility — detecting what processes actually do at the syscall level — Falco's kernel instrumentation (eBPF/kmod) is the right tool (at least for Linux).
 
 ## Feedback
 
