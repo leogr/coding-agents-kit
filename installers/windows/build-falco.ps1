@@ -114,7 +114,9 @@ if (-not (Test-Path (Join-Path $SrcDir 'CMakeLists.txt'))) {
     # Git writes progress to stderr; temporarily allow non-terminating errors
     $prevPref = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    & $Git clone --depth 1 --branch $Tag `
+    # Clone with autocrlf=false so source files stay LF — patches are
+    # normalized to LF and context matching requires consistent line endings.
+    & $Git -c core.autocrlf=false clone --depth 1 --branch $Tag `
         https://github.com/falcosecurity/falco.git $SrcDir 2>&1 | ForEach-Object { Write-Host $_ }
     $ErrorActionPreference = $prevPref
     if ($LASTEXITCODE -ne 0) { throw 'Failed to clone Falco.' }
@@ -129,8 +131,7 @@ if (-not (Test-Path (Join-Path $SrcDir 'CMakeLists.txt'))) {
 
 $PatchDir = $ScriptDir  # patches are alongside this script
 $patches = @(
-    (Join-Path $PatchDir 'falco-windows-http-output.patch'),
-    (Join-Path $PatchDir 'falco-windows-curl-noproxy.patch')
+    (Join-Path $PatchDir 'falco-windows-http-output.patch')
 )
 
 foreach ($patchPath in $patches) {
@@ -139,34 +140,9 @@ foreach ($patchPath in $patches) {
         continue
     }
     $patchName = Split-Path $patchPath -Leaf
-    # Check if already applied (git apply --check writes to stderr, suppress errors)
-    $prevPref = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    $null = & $Git -c safe.directory=* -C $SrcDir apply --check --whitespace=nowarn `
-        --recount --ignore-whitespace $patchPath 2>&1
-    $checkExit = $LASTEXITCODE
-    $ErrorActionPreference = $prevPref
-    if ($checkExit -ne 0) {
-        # Distinguish "already applied" from "does not apply". Failing closed
-        # avoids silently producing binaries without required fixes.
-        $prevPref = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        $null = & $Git -c safe.directory=* -C $SrcDir apply --reverse --check --whitespace=nowarn `
-            --recount --ignore-whitespace $patchPath 2>&1
-        $reverseExit = $LASTEXITCODE
-        $ErrorActionPreference = $prevPref
 
-        if ($reverseExit -eq 0) {
-            Write-Host "Patch already applied, skipping: $patchName"
-            continue
-        }
-
-        throw "Patch does not apply cleanly and is not already applied: $patchName"
-    }
-
-    Write-Host "Applying patch: $patchName"
-
-    # Normalise patch for git apply on Windows (CRLF handling)
+    # Normalise patch for git apply on Windows (CRLF handling).
+    # Must happen before --check since the raw file may have CRLF from git checkout.
     $tmpPatch = Join-Path $env:TEMP "falco-apply-$patchName"
     $lines = [System.IO.File]::ReadAllLines($patchPath)
     $inHunk = $false
@@ -183,6 +159,33 @@ foreach ($patchPath in $patches) {
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($tmpPatch, $normalised, $utf8NoBom)
 
+    # Check if patch applies cleanly (git apply --check writes to stderr, suppress errors)
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $null = & $Git -c safe.directory=* -C $SrcDir apply --check --whitespace=nowarn `
+        --recount --ignore-whitespace $tmpPatch 2>&1
+    $checkExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevPref
+    if ($checkExit -ne 0) {
+        # Distinguish "already applied" from "does not apply". Failing closed
+        # avoids silently producing binaries without required fixes.
+        $prevPref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $null = & $Git -c safe.directory=* -C $SrcDir apply --reverse --check --whitespace=nowarn `
+            --recount --ignore-whitespace $tmpPatch 2>&1
+        $reverseExit = $LASTEXITCODE
+        $ErrorActionPreference = $prevPref
+
+        Remove-Item $tmpPatch -Force -ErrorAction SilentlyContinue
+        if ($reverseExit -eq 0) {
+            Write-Host "Patch already applied, skipping: $patchName"
+            continue
+        }
+
+        throw "Patch does not apply cleanly and is not already applied: $patchName"
+    }
+
+    Write-Host "Applying patch: $patchName"
     & $Git -c safe.directory=* -C $SrcDir apply --whitespace=nowarn --recount --ignore-whitespace $tmpPatch
     if ($LASTEXITCODE -ne 0) { throw "Patch apply failed: $patchName" }
     Remove-Item $tmpPatch -Force -ErrorAction SilentlyContinue
