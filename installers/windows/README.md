@@ -44,7 +44,11 @@ claude-interceptor.exe ──Unix socket──▶ Plugin broker (in Falco)
 
 Falco's upstream build excludes `http_output` on Windows (CMake and preprocessor guards). The `falco-windows-http-output.patch` enables it using the same `HAS_HTTP_OUTPUT` pattern as the macOS patch. System curl is provided via vcpkg with SChannel backend (no OpenSSL dependency).
 
-A second patch (`falco-windows-curl-noproxy.patch`) adds `CURLOPT_NOPROXY="*"` to bypass system/environment proxy settings for localhost alert delivery.
+A second patch (`falco-windows-curl-noproxy.patch`) handles two SChannel-specific curl limitations:
+
+1. **NOPROXY**: Adds `CURLOPT_NOPROXY="*"` to bypass system/environment proxy settings for localhost alert delivery. Tolerates `CURLE_NOT_BUILT_IN` because the SChannel curl backend may omit proxy support — if proxy support is absent there is no proxy to bypass anyway.
+
+2. **CA path**: Wraps the CA certificate path/bundle options in a Windows-specific block that tolerates `CURLE_NOT_BUILT_IN`. SChannel uses the Windows Certificate Store automatically and does not support `CURLOPT_CAPATH` / `CURLOPT_CAINFO`. The original `CHECK_RES` macro would propagate this error and prevent `http_output` from initializing. For plain HTTP delivery to localhost no CA verification is needed regardless.
 
 ## Prerequisites
 
@@ -93,18 +97,23 @@ vcpkg provides the system curl library used by Falco's `http_output`.
 ```powershell
 git clone https://github.com/microsoft/vcpkg
 .\vcpkg\bootstrap-vcpkg.bat
-.\vcpkg\vcpkg install curl[schannel]:x64-windows-static
+.\vcpkg\vcpkg install curl:x64-windows-static
 # Set VCPKG_ROOT so the build script finds it:
 $env:VCPKG_ROOT = (Resolve-Path .\vcpkg).Path
 ```
+
+Note: on recent vcpkg baselines, the `schannel` feature name is not required for this use case. The packaging/build scripts only require `libcurl.lib` to be present under the selected triplet.
 
 ### 5. .NET Runtime + WiX Toolset (for MSI packaging)
 
 ```powershell
 winget install Microsoft.DotNet.Runtime.9 --accept-package-agreements --accept-source-agreements
 dotnet tool install --global wix
+wix eula accept wix7
 wix --version
 ```
+
+WiX v7 requires explicit OSMF EULA acceptance. Without this, packaging fails with `WIX7015`.
 
 ## Building
 
@@ -112,7 +121,7 @@ wix --version
 
 ```powershell
 # From the repository root:
-powershell -File installers\windows\package.ps1 -Version 0.1.0
+powershell -File installers\windows\package.ps1 -Version 0.1.2
 ```
 
 This single command:
@@ -121,7 +130,7 @@ This single command:
 3. Patches `falco.exe` plugin search path
 4. Stages all files and produces the MSI installer
 
-Output: `build/out/coding-agents-kit-0.1.0-windows-x64.msi`
+Output: `build/out/coding-agents-kit-0.1.2-windows-x64.msi`
 
 ### Step-by-Step Build
 
@@ -135,14 +144,14 @@ cd tools\coding-agents-kit-ctl && cargo build --release --target x86_64-pc-windo
 powershell -File installers\windows\build-falco.ps1 -Arch x64
 
 # 3. Package MSI (uses pre-built components)
-powershell -File installers\windows\package.ps1 -Version 0.1.0 -SkipRustBuild -SkipFalcoBuild
+powershell -File installers\windows\package.ps1 -Version 0.1.2 -SkipRustBuild -SkipFalcoBuild
 ```
 
 ### Build Options
 
 | Flag | Description |
 |------|-------------|
-| `-Version 0.1.0` | Package version (semantic versioning) |
+| `-Version 0.1.2` | Package version (semantic versioning) |
 | `-Arch x64` | Target architecture (default: x64) |
 | `-SkipRustBuild` | Skip Rust compilation (use pre-built binaries) |
 | `-SkipFalcoBuild` | Skip Falco build (use cached build) |
@@ -151,12 +160,11 @@ powershell -File installers\windows\package.ps1 -Version 0.1.0 -SkipRustBuild -S
 ## Installing
 
 ```powershell
-# Install (deploys files + runs postinstall setup)
+# Install (deploys files + runs postinstall setup deterministically)
 powershell -File build\out\Install-CodingAgentsKit.ps1
 
-# Or manual MSI + postinstall:
-msiexec /i build\out\coding-agents-kit-0.1.0-windows-x64.msi /quiet
-powershell -File "$env:LOCALAPPDATA\coding-agents-kit\scripts\postinstall.ps1"
+# Or run MSI directly (shows a standard wizard with acceptance notice)
+msiexec /i build\out\coding-agents-kit-0.1.2-windows-x64.msi
 ```
 
 The installer:
@@ -165,9 +173,17 @@ The installer:
 - Registers the Claude Code interceptor hook
 - Sets up auto-start via Registry Run key
 
+The MSI wizard now includes an acceptance notice that explains the hook, auto-start, and fail-closed behavior before installation continues.
+
+If the product is already installed, `Install-CodingAgentsKit.ps1` opens the MSI maintenance UI instead of forcing a silent reinstall.
+
+For unattended/silent automation, prefer `Install-CodingAgentsKit.ps1` so post-install tasks are always executed in user context and the script prints a final completion line.
+
+If you run the helper script, it prints a final completion line: `coding-agents-kit installation complete`.
+
 ### Uninstalling
 
-**Always use the uninstall helper script** — it stops the service, removes the Claude Code hook, removes the auto-start registry key, and then removes files:
+**Always use the uninstall helper script** — it runs the cleanup script, removes the Claude Code hook, removes the auto-start registry key, and then removes the MSI-managed files:
 
 ```powershell
 powershell -File Uninstall-CodingAgentsKit.ps1
@@ -211,6 +227,12 @@ powershell -File tests\test_e2e_windows.ps1
 ```
 
 ## Known Caveats
+
+- **`broker response timeout` / stale pending requests**: if Claude Code tool calls are denied with a broker timeout and Falco logs show `reaping stale pending request`, the alert round-trip is not completing. The most common cause is a misconfigured `http_output.url` in `falco.yaml` (must match the plugin's `http_port`) or an older Falco build without the SChannel curl fix in `falco-windows-curl-noproxy.patch`. Run `coding-agents-kit-ctl health` to confirm the pipeline is healthy after starting the service.
+
+- **ARM64 hosts and Rust/MSVC arch alignment**: on ARM64 Windows, use matching ARM64 toolchain for Rust host (`stable-aarch64-pc-windows-msvc`) and MSVC (`vcvarsall arm64`) when building ARM64 artifacts. Mixed host/target toolchains can fail with unresolved externals at link time.
+
+- **Falco nested CMake generator on ARM64 hosts**: Falco's `falcosecurity-libs` nested configure may choose a Visual Studio generator/platform different from the top-level build if generator/platform are not forwarded explicitly. Keep nested and top-level generator settings aligned to avoid `VCTargetsPath` / platform mismatch errors.
 
 - **Git Bash PATH shadowing**: Git Bash's `/usr/bin/tar` misinterprets Windows paths with `C:` as a remote host. The build scripts prepend `C:\Windows\System32` to PATH so Windows native `tar.exe` is used. If running build scripts manually from Git Bash, use: `powershell -File <script>`.
 
