@@ -152,6 +152,7 @@ impl Broker {
             let response = verdict.to_response_json(&pending.wire_id);
             let mut stream = pending.stream.lock().unwrap_or_else(|e| e.into_inner());
             let _ = write!(stream, "{}\n", response);
+            let _ = stream.flush();
             let _ = stream.shutdown(Shutdown::Both);
         }
     }
@@ -164,6 +165,7 @@ impl Broker {
             let response = verdict.to_response_json(&pending.wire_id);
             let mut stream = pending.stream.lock().unwrap_or_else(|e| e.into_inner());
             let _ = write!(stream, "{}\n", response);
+            let _ = stream.flush();
             let _ = stream.shutdown(Shutdown::Both);
         }
     }
@@ -195,6 +197,7 @@ impl Broker {
                     .to_response_json(&pending.wire_id);
                 let mut stream = pending.stream.lock().unwrap_or_else(|e| e.into_inner());
                 let _ = write!(stream, "{}\n", response);
+                let _ = stream.flush();
                 let _ = stream.shutdown(Shutdown::Both);
                 reaped += 1;
             }
