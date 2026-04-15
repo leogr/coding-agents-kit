@@ -14,6 +14,10 @@ const MAX_REQUEST_SIZE: u64 = 128 * 1024;
 /// Read timeout for interceptor connections (prevents slowloris).
 const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Accept timeout for the listener. The accept loop checks the broker's shutdown
+/// flag after each timeout, enabling clean exit during config hot-reload.
+const ACCEPT_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// Start the Unix socket server in a background thread.
 pub fn start(
     socket_path: String,
@@ -45,21 +49,43 @@ fn run_server(socket_path: &str, event_tx: &Sender<EventData>, broker: &Broker) 
 
     log::info!("broker listening on {}", socket_path);
 
-    for conn in listener.incoming() {
-        let stream = match conn {
-            Ok(s) => s,
-            Err(e) => {
-                log::warn!("failed to accept connection: {}", e);
-                continue;
+    // Set a timeout on the listener so the accept loop can check the shutdown
+    // flag periodically. Without this, the thread blocks forever in accept().
+    listener
+        .set_nonblocking(false)
+        .unwrap_or_else(|e| log::warn!("failed to set listener blocking mode: {}", e));
+
+    loop {
+        if broker.is_shutdown() {
+            log::info!("socket server shutting down");
+            break;
+        }
+
+        // Use a polling approach: set_nonblocking + sleep, or use SO_RCVTIMEO.
+        // UnixListener doesn't have set_read_timeout, so we use non-blocking + sleep.
+        listener
+            .set_nonblocking(true)
+            .unwrap_or_else(|e| log::warn!("failed to set non-blocking: {}", e));
+
+        match listener.accept() {
+            Ok((stream, _)) => {
+                // Got a connection — set it back to blocking for the read.
+                let _ = stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT));
+
+                if let Err(e) = handle_connection(stream, event_tx, broker) {
+                    log::warn!("connection error: {}", e);
+                }
             }
-        };
-
-        // Set read timeout to prevent a slow/malicious interceptor from
-        // blocking the accept loop.
-        let _ = stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT));
-
-        if let Err(e) = handle_connection(stream, event_tx, broker) {
-            log::warn!("connection error: {}", e);
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // No pending connection — sleep briefly then check shutdown.
+                std::thread::sleep(ACCEPT_TIMEOUT);
+            }
+            Err(e) => {
+                if broker.is_shutdown() {
+                    break;
+                }
+                log::warn!("failed to accept connection: {}", e);
+            }
         }
     }
 }

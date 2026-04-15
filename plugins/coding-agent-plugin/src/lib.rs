@@ -41,9 +41,8 @@ pub struct CodingAgentPlugin {
     /// Handle to the socket server background thread.
     #[allow(dead_code)]
     socket_thread: Option<std::thread::JoinHandle<()>>,
-    /// Handle to the HTTP alert receiver background thread.
-    #[allow(dead_code)]
-    http_thread: Option<std::thread::JoinHandle<()>>,
+    /// Handle to the HTTP alert receiver (thread + server for shutdown).
+    http_handle: Option<http_server::HttpServerHandle>,
     /// Handle to the pending request reaper thread.
     #[allow(dead_code)]
     reaper_thread: Option<std::thread::JoinHandle<()>>,
@@ -84,7 +83,7 @@ impl Plugin for CodingAgentPlugin {
         ));
 
         // Spawn HTTP alert receiver thread.
-        let http_thread = Some(http_server::start(&config, Arc::clone(&broker)));
+        let http_handle = Some(http_server::start(&config, Arc::clone(&broker)));
 
         // Spawn pending request reaper thread (TTL cleanup).
         let reaper_thread = Some(Broker::start_reaper(Arc::clone(&broker)));
@@ -94,7 +93,7 @@ impl Plugin for CodingAgentPlugin {
             event_rx,
             broker,
             socket_thread,
-            http_thread,
+            http_handle,
             reaper_thread,
         })
     }
@@ -109,15 +108,22 @@ impl Drop for CodingAgentPlugin {
         log::info!("plugin shutting down, signaling background threads...");
         self.broker.shutdown();
 
-        // Join the reaper thread (it checks the shutdown flag every REAPER_INTERVAL_SECS).
-        if let Some(handle) = self.reaper_thread.take() {
+        // Unblock the HTTP server so its thread can exit, then join it.
+        // This releases the TCP port before the new plugin instance binds.
+        if let Some(handle) = self.http_handle.take() {
+            handle.unblock();
+            let _ = handle.thread.join();
+        }
+
+        // Join the socket server thread (it checks shutdown flag via ACCEPT_TIMEOUT).
+        if let Some(handle) = self.socket_thread.take() {
             let _ = handle.join();
         }
 
-        // The socket server and HTTP server threads are blocked on accept/recv
-        // and cannot be cleanly joined without closing their listeners.
-        // Dropping them here lets the OS reclaim resources when the process exits
-        // or Falco reinitializes the plugin.
+        // Join the reaper thread (it checks shutdown flag every REAPER_INTERVAL_SECS).
+        if let Some(handle) = self.reaper_thread.take() {
+            let _ = handle.join();
+        }
 
         log::info!("plugin shutdown complete");
     }

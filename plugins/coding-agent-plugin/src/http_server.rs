@@ -30,39 +30,36 @@ enum VerdictType {
     Unknown,
 }
 
+/// Handle to a running HTTP alert receiver (thread + server for shutdown).
+pub struct HttpServerHandle {
+    pub thread: std::thread::JoinHandle<()>,
+    server: Arc<tiny_http::Server>,
+}
+
+impl HttpServerHandle {
+    /// Unblock the HTTP server so the thread can exit.
+    pub fn unblock(&self) {
+        self.server.unblock();
+    }
+}
+
 /// Start the HTTP alert receiver in a background thread.
 /// Listens for Falco JSON alerts via http_output and resolves verdicts.
+/// Returns a handle that can be used to shut down the server.
 pub fn start(
     config: &CodingAgentConfig,
     broker: Arc<Broker>,
-) -> std::thread::JoinHandle<()> {
+) -> HttpServerHandle {
     let deny_tags = config.deny_tags.clone();
     let ask_tags = config.ask_tags.clone();
     let seen_tags = config.seen_tags.clone();
     let bind_addr = format!("127.0.0.1:{}", config.http_port);
 
-    std::thread::Builder::new()
-        .name("cak-http-server".to_string())
-        .spawn(move || run_server(&bind_addr, &deny_tags, &ask_tags, &seen_tags, &broker))
-        .expect("failed to spawn HTTP server thread")
-}
+    let server = Arc::new(
+        tiny_http::Server::http(&bind_addr)
+            .unwrap_or_else(|e| panic!("failed to bind HTTP server on {bind_addr}: {e}")),
+    );
 
-fn run_server(
-    bind_addr: &str,
-    deny_tags: &[String],
-    ask_tags: &[String],
-    seen_tags: &[String],
-    broker: &Broker,
-) {
-    let server = match tiny_http::Server::http(bind_addr) {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("failed to bind HTTP server on {}: {}", bind_addr, e);
-            return;
-        }
-    };
-
-    // Log the actual bound address (important when http_port=0 for auto-assign).
     log::info!(
         "HTTP alert receiver listening on {}",
         server.server_addr().to_ip().map_or_else(
@@ -71,6 +68,22 @@ fn run_server(
         )
     );
 
+    let server_clone = Arc::clone(&server);
+    let thread = std::thread::Builder::new()
+        .name("cak-http-server".to_string())
+        .spawn(move || run_server(server_clone, &deny_tags, &ask_tags, &seen_tags, &broker))
+        .expect("failed to spawn HTTP server thread");
+
+    HttpServerHandle { thread, server }
+}
+
+fn run_server(
+    server: Arc<tiny_http::Server>,
+    deny_tags: &[String],
+    ask_tags: &[String],
+    seen_tags: &[String],
+    broker: &Broker,
+) {
     for mut request in server.incoming_requests() {
         // Respond 200 immediately to avoid blocking Falco's output worker.
         // Parse and process the alert asynchronously (in this same thread,
