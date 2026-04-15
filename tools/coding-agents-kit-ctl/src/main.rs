@@ -774,24 +774,55 @@ fn health(prefix: &PathBuf) {
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            if stdout.contains("\"permissionDecision\"") {
-                // Parse to show a cleaner message.
-                if stdout.contains("\"allow\"") {
-                    println!("OK: pipeline healthy (synthetic event → allow)");
-                } else if stdout.contains("\"deny\"") {
-                    println!("OK: pipeline healthy (synthetic event → deny)");
-                    println!("  Note: a deny rule matched the health-check event.");
-                    println!("  This is expected if you have rules matching Bash commands.");
-                } else if stdout.contains("\"ask\"") {
-                    println!("OK: pipeline healthy (synthetic event → ask)");
-                } else {
-                    println!("OK: pipeline responded (unexpected verdict)");
-                    println!("  Response: {}", stdout.trim());
+            let parsed: serde_json::Value = match serde_json::from_str(stdout.trim()) {
+                Ok(v) => v,
+                Err(_) => {
+                    eprintln!("FAIL: interceptor returned malformed JSON");
+                    eprintln!("  Output: {}", stdout.trim());
+                    process::exit(1);
                 }
-            } else {
+            };
+
+            let decision = parsed
+                .pointer("/hookSpecificOutput/permissionDecision")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let reason = parsed
+                .pointer("/hookSpecificOutput/permissionDecisionReason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if decision.is_empty() {
                 eprintln!("FAIL: interceptor returned unexpected output");
                 eprintln!("  Output: {}", stdout.trim());
                 process::exit(1);
+            }
+
+            // Denies caused by infrastructure failure (not real security rules)
+            // indicate a broken pipeline. Detect both forms of broker failure:
+            // - "broker response timeout": socket connected but no verdict arrived
+            // - "broker unavailable": connection refused (service not running)
+            if decision == "deny"
+                && (reason.contains("broker response timeout")
+                    || reason.contains("broker unavailable"))
+            {
+                eprintln!("FAIL: broker unreachable or timed out while waiting for verdict");
+                eprintln!("  Reason: {}", reason);
+                process::exit(1);
+            }
+
+            // Parse to show a cleaner message.
+            if decision == "allow" {
+                println!("OK: pipeline healthy (synthetic event → allow)");
+            } else if decision == "deny" {
+                println!("OK: pipeline healthy (synthetic event → deny)");
+                println!("  Note: a deny rule matched the health-check event.");
+                println!("  This is expected if you have rules matching Bash commands.");
+            } else if decision == "ask" {
+                println!("OK: pipeline healthy (synthetic event → ask)");
+            } else {
+                println!("OK: pipeline responded (unexpected verdict)");
+                println!("  Response: {}", stdout.trim());
             }
         }
         Ok(out) => {
