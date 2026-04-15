@@ -8,7 +8,7 @@
     all files, and produces an MSI installer via WiX v4.
 
 .PARAMETER Version
-    Package version (default: 0.1.0).
+    Package version (default: 0.1.2).
 
 .PARAMETER Arch
     Target architecture: x64 or arm64 (default: native).
@@ -23,7 +23,7 @@
     Path to pre-built falco.exe (overrides Falco build).
 #>
 param(
-    [string]$Version = '0.1.0',
+    [string]$Version = '0.1.2',
     [string]$Arch = '',
     [switch]$SkipFalcoBuild,
     [switch]$SkipRustBuild,
@@ -61,6 +61,12 @@ $WixArch = switch ($Arch) {
     'x64'   { 'x64' }
     'arm64' { 'arm64' }
     default { 'x64' }
+}
+
+$UtilCABinaryRef = switch ($Arch) {
+    'x64'   { 'Wix4UtilCA_X64' }
+    'arm64' { 'Wix4UtilCA_A64' }
+    default { 'Wix4UtilCA_X64' }
 }
 
 Write-Host "coding-agents-kit Windows Package Builder"
@@ -218,6 +224,7 @@ Write-Host "  ProductCode: $ProductCode"
 # ---------------------------------------------------------------------------
 
 $WxsFile = Join-Path $ScriptDir 'Package.wxs'
+$LicenseRtf = Join-Path $ScriptDir 'license.rtf'
 $OutputDir = Join-Path $BuildDir 'out'
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $MsiName = "coding-agents-kit-$Version-windows-$Arch.msi"
@@ -227,10 +234,17 @@ Write-Host "Building MSI..."
 $wix = Get-Command wix -ErrorAction SilentlyContinue
 if (-not $wix) { throw 'WiX Toolset not found. Install via: dotnet tool install --global wix' }
 
+# Ensure WiX v7 OSMF EULA is accepted in non-interactive build environments.
+& wix eula accept wix7 2>&1 | Out-Null
+
 & wix build $WxsFile `
     -d "StageDir=$StageDir" `
     -d "ProductVersion=$Version" `
     -d "ProductCode=$ProductCode" `
+    -d "UtilCABinaryRef=$UtilCABinaryRef" `
+    -bv "WixUILicenseRtf=$LicenseRtf" `
+    -ext WixToolset.Util.wixext `
+    -ext WixToolset.UI.wixext `
     -o (Join-Path $OutputDir $MsiName) `
     -arch $WixArch
 
@@ -243,7 +257,7 @@ if ($LASTEXITCODE -ne 0) { throw 'WiX build failed.' }
 $uninstallScript = Join-Path $OutputDir 'Uninstall-CodingAgentsKit.ps1'
 @"
 # Uninstall coding-agents-kit $Version
-# Run cleanup first: stop service, remove hook, remove auto-start
+# Run cleanup first: remove hook and auto-start registration
 `$prefix = Join-Path `$env:LOCALAPPDATA 'coding-agents-kit'
 `$cleanup = Join-Path `$prefix 'scripts\uninstall.ps1'
 if (Test-Path `$cleanup) {
@@ -263,11 +277,23 @@ $installScript = Join-Path $OutputDir 'Install-CodingAgentsKit.ps1'
 @"
 # Install coding-agents-kit $Version
 `$msi = Join-Path `$PSScriptRoot '$MsiName'
+`$productCode = '$ProductCode'
+
+# If already installed, open normal MSI maintenance UI (Repair/Uninstall)
+# instead of forcing a silent reinstall.
+`$installer = New-Object -ComObject WindowsInstaller.Installer
+`$state = `$installer.ProductState(`$productCode)
+if (`$state -eq 5) {
+    Start-Process msiexec -ArgumentList '/i', `$msi -Wait | Out-Null
+    exit 0
+}
+
 `$p = Start-Process msiexec -ArgumentList '/i', `$msi, '/quiet' -Wait -PassThru
 if (`$p.ExitCode -ne 0) { Write-Error "MSI install failed (exit `$(`$p.ExitCode))"; exit 1 }
 # Run post-install setup
 `$prefix = Join-Path `$env:LOCALAPPDATA 'coding-agents-kit'
 & "`$prefix\scripts\postinstall.ps1" -Prefix `$prefix
+Write-Host "coding-agents-kit installation complete"
 "@ | Set-Content $installScript -Encoding UTF8
 
 Write-Host ""

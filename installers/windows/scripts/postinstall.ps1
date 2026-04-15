@@ -98,10 +98,15 @@ Write-Host "Generated falco.coding_agents_plugin.yaml"
 
 $ctlExe = Join-Path $BinDir 'coding-agents-kit-ctl.exe'
 if (Test-Path $ctlExe) {
-    $prevPref = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    & $ctlExe hook add 2>&1 | ForEach-Object { Write-Host $_ }
-    $ErrorActionPreference = $prevPref
+  try {
+    $hookOutput = & $ctlExe hook add 2>&1
+    $hookOutput | ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "Hook registration failed (exit $LASTEXITCODE). Install will continue."
+    }
+  } catch {
+    Write-Warning "Hook registration failed: $($_.Exception.Message)"
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -110,13 +115,17 @@ if (Test-Path $ctlExe) {
 
 $launcherScript = Join-Path $BinDir 'coding-agents-kit-launcher.ps1'
 if (Test-Path $launcherScript) {
+  try {
     $runCmd = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherScript`""
     $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
     if (-not (Test-Path $regPath)) {
-        New-Item -Path $regPath -Force | Out-Null
+      New-Item -Path $regPath -Force | Out-Null
     }
     Set-ItemProperty -Path $regPath -Name 'CodingAgentsKit' -Value $runCmd
     Write-Host "Registered auto-start"
+  } catch {
+    Write-Warning "Auto-start registration failed: $($_.Exception.Message)"
+    }
 }
 
-Write-Host "Post-install complete"
+  Write-Host "Post-install complete: coding-agents-kit is installed and configured."

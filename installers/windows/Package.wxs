@@ -1,4 +1,5 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
   <Package Name="coding-agents-kit"
            Manufacturer="Falco Authors"
            Version="$(var.ProductVersion)"
@@ -7,7 +8,7 @@
            Scope="perUser">
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of coding-agents-kit is already installed."
-                  AllowSameVersionUpgrades="yes" />
+            AllowSameVersionUpgrades="yes" />
     <MediaTemplate EmbedCab="yes" />
 
     <Feature Id="Complete" Title="coding-agents-kit" Level="1">
@@ -20,9 +21,26 @@
       <ComponentGroupRef Id="RuntimeDirs" />
     </Feature>
 
-    <!-- Custom actions are not used for per-user installs (error 1721).
-         Post-install setup is handled by package.ps1 after MSI deployment.
-         Uninstall cleanup is handled by coding-agents-kit-ctl uninstall. -->
+    <ui:WixUI Id="WixUI_InstallDir" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+
+    <!-- Run post-install setup at the end of MSI install so double-clicking
+         the MSI is sufficient for a working installation. -->
+    <CustomAction Id="SetRunPostInstallCmdLine"
+                  Property="RunPostInstall"
+                  Value='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "[#PostInstallScriptFile]"' />
+
+    <CustomAction Id="RunPostInstall"
+                  BinaryRef="$(var.UtilCABinaryRef)"
+                  DllEntry="WixQuietExec64"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetRunPostInstallCmdLine" After="InstallFiles" Condition="NOT Installed AND NOT REMOVE" />
+      <Custom Action="RunPostInstall" After="SetRunPostInstallCmdLine" Condition="NOT Installed AND NOT REMOVE" />
+    </InstallExecuteSequence>
   </Package>
 
   <!-- Directory layout under %LOCALAPPDATA%\coding-agents-kit\ -->
@@ -101,10 +119,10 @@
   <Fragment>
     <ComponentGroup Id="ScriptFiles" Directory="SCRIPTSDIR">
       <Component>
-        <File Source="$(var.StageDir)\scripts\postinstall.ps1" />
+        <File Id="PostInstallScriptFile" Source="$(var.StageDir)\scripts\postinstall.ps1" />
       </Component>
       <Component>
-        <File Source="$(var.StageDir)\scripts\uninstall.ps1" />
+        <File Id="UninstallScriptFile" Source="$(var.StageDir)\scripts\uninstall.ps1" />
       </Component>
     </ComponentGroup>
   </Fragment>
