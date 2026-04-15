@@ -9,7 +9,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  FALCO_VERSION: "0.43.0"
 
 jobs:
   build-test-linux:
@@ -42,31 +41,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
-      - name: Build interceptor
-        run: cargo build --release
-        working-directory: hooks/claude-code
-
-      - name: Build plugin
-        run: cargo build --release
-        working-directory: plugins/coding-agent-plugin
-
-      - name: Build ctl
-        run: cargo build --release
-        working-directory: tools/coding-agents-kit-ctl
+      - name: Build
+        run: make build
 
       - name: Download Falco
         run: |
-          mkdir -p build
-          curl -fSL -o build/falco.tar.gz \
-            "https://download.falco.org/packages/bin/${{ matrix.arch }}/falco-${FALCO_VERSION}-${{ matrix.arch }}.tar.gz"
-          tar xzf build/falco.tar.gz -C build/
-          echo "${PWD}/build/falco-${FALCO_VERSION}-${{ matrix.arch }}/usr/bin" >> "$GITHUB_PATH"
+          make download-falco-linux
+          echo "${PWD}/$(make falco-linux-bin-dir)" >> "$GITHUB_PATH"
 
       - name: Verify Falco
         run: falco --version
 
       - name: Run interceptor tests
-        run: bash tests/test_interceptor.sh
+        run: make test-interceptor
 
       - name: Run e2e tests
-        run: bash tests/test_e2e.sh
+        run: make test-e2e

@@ -287,30 +287,26 @@ The macOS implementation includes `is_service_loaded()` for idempotent start/sto
 
 ## Build & Development
 
-### Claude Code Interceptor (hooks/claude-code/)
+### Building
 
 ```bash
-cd hooks/claude-code
-cargo build --release     # binary at target/release/claude-interceptor
-make install              # installs to ~/.coding-agents-kit/bin/
+make build                  # Build all components for the native architecture
+make build-interceptor      # Interceptor only
+make build-plugin           # Plugin only
+make build-ctl              # CTL tool only
 ```
-
-### Plugin (plugins/coding-agent-plugin/)
 
 Requires latest stable Rust (the falco_plugin SDK tracks latest stable as MSRV).
 
-```bash
-cd plugins/coding-agent-plugin
-cargo build --release     # .so (Linux) or .dylib (macOS) at target/release/
+### Tests
 
-# Verify with Falco
-falco -o "engine.kind=nodriver" \
-  -o "plugins[0].name=coding_agent" \
-  -o "plugins[0].library_path=$(pwd)/target/release/libcoding_agent.so" \
-  -o 'plugins[0].init_config={}' \
-  -o "load_plugins[0]=coding_agent" \
-  --plugin-info coding_agent
+```bash
+make test                   # Run all tests
+make test-interceptor       # Interceptor unit tests (mock broker, no Falco needed)
+make test-e2e               # E2E tests (requires Falco in PATH, plugin, and interceptor built)
 ```
+
+On Linux, use `make download-falco-linux` to download pre-built Falco binaries and `make falco-linux-bin-dir` to get the binary path. On macOS, use `make falco-macos` to build from source.
 
 ### Packaging
 
@@ -324,17 +320,6 @@ make macos-aarch64          # Apple Silicon
 make macos-x86_64           # Intel (must run on Intel Mac)
 make macos-universal        # Fat binary (requires Rosetta + x86_64 Homebrew)
 make falco-macos            # Build only Falco (convenience target)
-```
-
-### Tests
-
-```bash
-# Interceptor unit tests (mock broker, no Falco needed)
-bash tests/test_interceptor.sh
-
-# E2E tests (requires Falco 0.43+, plugin, and interceptor built)
-# On macOS, falco must be in PATH (e.g. from build/falco-0.43.0-darwin-aarch64/)
-bash tests/test_e2e.sh
 ```
 
 ### Environment Variables

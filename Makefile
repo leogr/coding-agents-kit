@@ -1,8 +1,55 @@
 VERSION := 0.1.0
+FALCO_VERSION := 0.43.0
+ARCH := $(shell uname -m)
 
-.PHONY: all linux linux-x86_64 linux-aarch64 macos macos-aarch64 macos-x86_64 macos-universal falco-macos clean help
+.PHONY: all build build-interceptor build-plugin build-ctl \
+	download-falco-linux falco-linux-bin-dir \
+	test test-interceptor test-e2e \
+	linux linux-x86_64 linux-aarch64 \
+	macos macos-aarch64 macos-x86_64 macos-universal falco-macos \
+	clean help
 
 all: linux
+
+## Build all components for the native architecture (no packaging)
+build: build-interceptor build-plugin build-ctl
+
+## Build the interceptor
+build-interceptor:
+	cd hooks/claude-code && cargo build --release
+
+## Build the plugin
+build-plugin:
+	cd plugins/coding-agent-plugin && cargo build --release
+
+## Build the ctl tool
+build-ctl:
+	cd tools/coding-agents-kit-ctl && cargo build --release
+
+## Download pre-built Falco binary for the native architecture (Linux only)
+download-falco-linux:
+	@mkdir -p build
+	@if [ ! -f "build/falco-$(FALCO_VERSION)-$(ARCH).tar.gz" ]; then \
+		echo "Downloading Falco $(FALCO_VERSION) for $(ARCH)..."; \
+		curl -fSL -o "build/falco-$(FALCO_VERSION)-$(ARCH).tar.gz" \
+			"https://download.falco.org/packages/bin/$(ARCH)/falco-$(FALCO_VERSION)-$(ARCH).tar.gz"; \
+	fi
+	@tar xzf "build/falco-$(FALCO_VERSION)-$(ARCH).tar.gz" -C build/
+
+## Print the path to the downloaded Falco binary directory (Linux only)
+falco-linux-bin-dir:
+	@echo "build/falco-$(FALCO_VERSION)-$(ARCH)/usr/bin"
+
+## Run all tests
+test: test-interceptor test-e2e
+
+## Run interceptor unit tests
+test-interceptor:
+	bash tests/test_interceptor.sh
+
+## Run end-to-end tests (requires Falco in PATH)
+test-e2e:
+	bash tests/test_e2e.sh
 
 ## Build Linux packages for all architectures
 linux: linux-x86_64 linux-aarch64
@@ -45,21 +92,30 @@ clean:
 help:
 	@echo "Usage: make [target]"
 	@echo ""
-	@echo "Targets:"
-	@echo "  all             Build Linux packages for all architectures (default)"
-	@echo "  linux           Same as all"
-	@echo "  linux-x86_64    Build Linux x86_64 package"
-	@echo "  linux-aarch64   Build Linux aarch64 package (requires cross toolchain)"
-	@echo "  macos           Build macOS package for native architecture"
-	@echo "  macos-aarch64   Build macOS Apple Silicon package"
-	@echo "  macos-x86_64    Build macOS Intel package (must run on Intel Mac)"
-	@echo "  macos-universal Build macOS universal binary (requires Rosetta + x86_64 Homebrew)"
-	@echo "  falco-macos     Build Falco from source for macOS"
-	@echo "  clean           Remove all build artifacts"
+	@echo "Build:"
+	@echo "  build              Build all components for the native architecture"
+	@echo "  build-interceptor  Build the interceptor"
+	@echo "  build-plugin       Build the plugin"
+	@echo "  build-ctl          Build the ctl tool"
 	@echo ""
-	@echo "Output:"
-	@echo "  build/coding-agents-kit-$(VERSION)-linux-x86_64.tar.gz"
-	@echo "  build/coding-agents-kit-$(VERSION)-linux-aarch64.tar.gz"
-	@echo "  build/coding-agents-kit-$(VERSION)-darwin-aarch64.tar.gz"
-	@echo "  build/coding-agents-kit-$(VERSION)-darwin-x86_64.tar.gz"
-	@echo "  build/coding-agents-kit-$(VERSION)-darwin-universal.tar.gz"
+	@echo "Test:"
+	@echo "  test               Run all tests"
+	@echo "  test-interceptor   Run interceptor unit tests"
+	@echo "  test-e2e           Run end-to-end tests (requires Falco in PATH)"
+	@echo ""
+	@echo "Falco:"
+	@echo "  download-falco-linux  Download pre-built Falco binary (Linux only)"
+	@echo "  falco-linux-bin-dir   Print path to downloaded Falco binary directory"
+	@echo "  falco-macos           Build Falco from source (macOS only)"
+	@echo ""
+	@echo "Package:"
+	@echo "  linux              Build Linux packages for all architectures (default)"
+	@echo "  linux-x86_64       Build Linux x86_64 package"
+	@echo "  linux-aarch64      Build Linux aarch64 package (requires cross toolchain)"
+	@echo "  macos              Build macOS package for native architecture"
+	@echo "  macos-aarch64      Build macOS Apple Silicon package"
+	@echo "  macos-x86_64       Build macOS Intel package (must run on Intel Mac)"
+	@echo "  macos-universal    Build macOS universal binary (requires Rosetta + x86_64 Homebrew)"
+	@echo ""
+	@echo "Other:"
+	@echo "  clean              Remove all build artifacts"

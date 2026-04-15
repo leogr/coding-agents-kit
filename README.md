@@ -236,10 +236,11 @@ See [`installers/macos/`](installers/macos/) for details.
 <summary><strong>Individual Components</strong></summary>
 
 ```bash
-cd hooks/claude-code && cargo build --release            # Interceptor
-cd plugins/coding-agent-plugin && cargo build --release   # Falco plugin
-cd tools/coding-agents-kit-ctl && cargo build --release   # CLI tool
-make falco-macos                                          # Falco binary (macOS only)
+make build                # All components (interceptor, plugin, CLI tool)
+make build-interceptor    # Interceptor only
+make build-plugin         # Falco plugin only
+make build-ctl            # CLI tool only
+make falco-macos          # Falco binary (macOS only)
 ```
 
 </details>
