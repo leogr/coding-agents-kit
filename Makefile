@@ -4,9 +4,10 @@ ARCH := $(shell uname -m)
 
 .PHONY: all build build-interceptor build-plugin build-ctl \
 	download-falco-linux falco-linux-bin-dir \
+	falco-macos falco-macos-bin-dir \
 	test test-interceptor test-e2e \
 	linux linux-x86_64 linux-aarch64 \
-	macos macos-aarch64 macos-x86_64 macos-universal falco-macos \
+	macos macos-aarch64 macos-x86_64 macos-universal \
 	clean help
 
 all: linux
@@ -81,6 +82,10 @@ macos-universal:
 falco-macos:
 	bash installers/macos/build-falco.sh
 
+## Print the path to the built Falco binary directory (macOS only)
+falco-macos-bin-dir:
+	@echo "build/falco-$(FALCO_VERSION)-darwin-$(subst arm64,aarch64,$(ARCH))"
+
 ## Remove build artifacts
 clean:
 	rm -rf build/
@@ -107,6 +112,7 @@ help:
 	@echo "  download-falco-linux  Download pre-built Falco binary (Linux only)"
 	@echo "  falco-linux-bin-dir   Print path to downloaded Falco binary directory"
 	@echo "  falco-macos           Build Falco from source (macOS only)"
+	@echo "  falco-macos-bin-dir   Print path to built Falco binary directory"
 	@echo ""
 	@echo "Package:"
 	@echo "  linux              Build Linux packages for all architectures (default)"
