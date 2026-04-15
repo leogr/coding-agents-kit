@@ -25,6 +25,7 @@
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::{self, BufRead, Read, Write};
+#[cfg(unix)]
 use std::net::Shutdown;
 use std::process;
 use std::time::{Duration, Instant};
@@ -205,7 +206,11 @@ fn communicate(socket_path: &str, request: &[u8], timeout: Duration) -> Result<R
         .write_all(request)
         .map_err(|e| format!("broker write failed: {e}"))?;
 
-    // Signal we're done writing so the broker knows the full request arrived.
+    // Signal end-of-write so the broker's read_line can detect EOF alongside
+    // the \n delimiter. Skipped on Windows: shutdown(SD_SEND) on AF_UNIX
+    // resets the connection on some Windows builds, preventing the broker
+    // from writing the verdict back to the interceptor.
+    #[cfg(unix)]
     stream
         .shutdown(Shutdown::Write)
         .map_err(|e| format!("broker shutdown failed: {e}"))?;
