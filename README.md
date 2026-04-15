@@ -1,6 +1,7 @@
 # coding-agents-kit
 
-[![Experimental](https://img.shields.io/badge/status-experimental-orange?style=for-the-badge)](#status)
+[![Falco Ecosystem Repository](https://github.com/falcosecurity/evolution/blob/main/repos/badges/falco-ecosystem-blue.svg)](https://github.com/falcosecurity/evolution/blob/main/REPOSITORIES.md#ecosystem-scope)
+[![Sandbox](https://img.shields.io/badge/status-sandbox-red?style=for-the-badge)](https://github.com/falcosecurity/evolution/blob/main/REPOSITORIES.md#sandbox)
 
 [![License](https://img.shields.io/github/license/leogr/coding-agents-kit?style=flat-square)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macOS-blue?style=flat-square)
