@@ -163,17 +163,24 @@ fi
 # Claude Code hook registration
 # ---------------------------------------------------------------------------
 
-info "Registering Claude Code hook..."
-
 CTL_PREFIX_FLAG=""
 if [[ "$PREFIX" != "${HOME}/.coding-agents-kit" ]]; then
     CTL_PREFIX_FLAG="--prefix=${PREFIX}"
 fi
 
-if $DRY_RUN; then
-    echo "  [DRY-RUN] ${PREFIX}/bin/coding-agents-kit-ctl ${CTL_PREFIX_FLAG} hook add"
+if $SKIP_SYSTEMD; then
+    warn "Skipping hook registration (systemd service not installed)."
+    warn "The hook requires the service to be running — registering it"
+    warn "without the service would block ALL Claude Code tool calls."
+    warn "Start the service manually, then run:"
+    warn "  ${PREFIX}/bin/coding-agents-kit-ctl ${CTL_PREFIX_FLAG} hook add"
 else
-    run "$PREFIX/bin/coding-agents-kit-ctl" $CTL_PREFIX_FLAG hook add
+    info "Registering Claude Code hook..."
+    if $DRY_RUN; then
+        echo "  [DRY-RUN] ${PREFIX}/bin/coding-agents-kit-ctl ${CTL_PREFIX_FLAG} hook add"
+    else
+        run "$PREFIX/bin/coding-agents-kit-ctl" $CTL_PREFIX_FLAG hook add
+    fi
 fi
 
 # ---------------------------------------------------------------------------
