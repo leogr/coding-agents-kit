@@ -465,8 +465,6 @@ fn uninstall(prefix: &PathBuf, keep_user_rules: bool) {
     println!();
 
     // 1. Stop the service.
-    // Hook removal is handled by the service itself: ExecStopPost on Linux and the
-    // launcher script trap on macOS. No explicit hook_remove() call is needed here.
     #[cfg(target_os = "linux")]
     {
         let _ = Command::new("systemctl")
@@ -500,7 +498,14 @@ fn uninstall(prefix: &PathBuf, keep_user_rules: bool) {
         }
     }
 
-    // 2. Remove the installation directory.
+    // 2. Remove the hook (safety net).
+    // The service's ExecStopPost (Linux) or launcher trap (macOS) should have
+    // removed the hook already. But if the service wasn't running or the stop
+    // hooks didn't fire, the hook would stay registered and brick Claude Code.
+    println!("Removing Claude Code hook...");
+    hook_remove();
+
+    // 3. Remove the installation directory.
     if prefix.exists() {
         if keep_user_rules {
             let user_rules = prefix.join("rules/user");
