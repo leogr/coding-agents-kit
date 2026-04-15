@@ -67,7 +67,7 @@ if (-not $VcpkgRoot -or -not (Test-Path $VcpkgRoot)) {
     throw @"
 vcpkg not found. Set VCPKG_ROOT to your vcpkg installation directory.
 Install vcpkg:  git clone https://github.com/microsoft/vcpkg && .\vcpkg\bootstrap-vcpkg.bat
-Install curl:   vcpkg install curl[schannel]:$Arch-windows-static
+Install curl:   vcpkg install curl:$Arch-windows-static
 "@
 }
 $VcpkgToolchain = Join-Path $VcpkgRoot 'scripts\buildsystems\vcpkg.cmake'
@@ -81,7 +81,7 @@ $curlLib = Join-Path $VcpkgRoot "installed\$VcpkgTriplet\lib\libcurl.lib"
 if (-not (Test-Path $curlLib)) {
     throw @"
 curl not found in vcpkg for triplet $VcpkgTriplet.
-Install:  vcpkg install curl[schannel]:$VcpkgTriplet
+Install:  vcpkg install curl:$VcpkgTriplet
 "@
 }
 
@@ -147,8 +147,21 @@ foreach ($patchPath in $patches) {
     $checkExit = $LASTEXITCODE
     $ErrorActionPreference = $prevPref
     if ($checkExit -ne 0) {
-        Write-Host "Patch already applied or does not apply cleanly, skipping: $patchName"
-        continue
+        # Distinguish "already applied" from "does not apply". Failing closed
+        # avoids silently producing binaries without required fixes.
+        $prevPref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $null = & $Git -c safe.directory=* -C $SrcDir apply --reverse --check --whitespace=nowarn `
+            --recount --ignore-whitespace $patchPath 2>&1
+        $reverseExit = $LASTEXITCODE
+        $ErrorActionPreference = $prevPref
+
+        if ($reverseExit -eq 0) {
+            Write-Host "Patch already applied, skipping: $patchName"
+            continue
+        }
+
+        throw "Patch does not apply cleanly and is not already applied: $patchName"
     }
 
     Write-Host "Applying patch: $patchName"
@@ -175,13 +188,30 @@ foreach ($patchPath in $patches) {
     Remove-Item $tmpPatch -Force -ErrorAction SilentlyContinue
 }
 
+# Ensure nested falcosecurity-libs configure uses the same generator/platform
+# as the top-level build. On ARM64 hosts, failing to forward these values can
+# cause an unexpected VS/ARM64 fallback in nested CMake runs.
+$libsCmake = Join-Path $SrcDir 'cmake\modules\falcosecurity-libs.cmake'
+if (Test-Path $libsCmake) {
+    $libsText = Get-Content $libsCmake -Raw
+    if ($libsText -notmatch '-G "\$\{CMAKE_GENERATOR\}"') {
+        $libsText = $libsText -replace '(COMMAND\s+"\$\{CMAKE_COMMAND\}"\s+-DCMAKE_BUILD_TYPE="\$\{CMAKE_BUILD_TYPE\}")', '$1 -G "${CMAKE_GENERATOR}" -A "${CMAKE_GENERATOR_PLATFORM}"'
+        Set-Content -Path $libsCmake -Value $libsText -Encoding UTF8
+        Write-Host 'Applied nested CMake generator/platform forwarding fix.'
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
 
 $BuildDir = Join-Path $BuildBase "falco-build-$Version-$Arch"
-New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+if (Test-Path $BuildDir) {
+    Write-Host 'Removing stale Falco build directory...'
+    Remove-Item $BuildDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 
 Write-Host "=== Building Falco $Version ($Arch) ==="
 
