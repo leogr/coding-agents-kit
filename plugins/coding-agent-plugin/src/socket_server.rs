@@ -1,11 +1,13 @@
 use std::io::{BufRead, BufReader, Read};
-use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::unix::net::UnixListener;
+
 use crossbeam_channel::Sender;
 
-use crate::broker::Broker;
+use crate::broker::{Broker, BrokerStream};
 use crate::event::{EventData, InterceptorRequest};
 
 /// Max request size from an interceptor (64KB + envelope overhead).
@@ -18,7 +20,10 @@ const CONNECTION_READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// flag after each timeout, enabling clean exit during config hot-reload.
 const ACCEPT_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Start the Unix socket server in a background thread.
+/// Start the broker socket server in a background thread.
+///
+/// Listens on a Unix domain socket at `socket_path` (all platforms).
+/// On Windows, uses the `uds_windows` crate for AF_UNIX support.
 pub fn start(
     socket_path: String,
     event_tx: Sender<EventData>,
@@ -30,6 +35,7 @@ pub fn start(
         .expect("failed to spawn socket server thread")
 }
 
+#[cfg(unix)]
 fn run_server(socket_path: &str, event_tx: &Sender<EventData>, broker: &Broker) {
     // Remove stale socket file if it exists.
     let _ = std::fs::remove_file(socket_path);
@@ -90,8 +96,65 @@ fn run_server(socket_path: &str, event_tx: &Sender<EventData>, broker: &Broker) 
     }
 }
 
+#[cfg(windows)]
+fn run_server(socket_path: &str, event_tx: &Sender<EventData>, broker: &Broker) {
+    // Remove stale socket file if it exists.
+    let _ = std::fs::remove_file(socket_path);
+
+    // Ensure parent directory exists.
+    if let Some(parent) = std::path::Path::new(socket_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let listener = match uds_windows::UnixListener::bind(socket_path) {
+        Ok(l) => l,
+        Err(e) => {
+            log::error!("failed to bind Unix socket at {}: {}", socket_path, e);
+            return;
+        }
+    };
+
+    log::info!("broker listening on {}", socket_path);
+
+    // Use non-blocking accept + shutdown flag polling, same as the Unix impl.
+    // This enables clean exit during config hot-reload.
+    listener
+        .set_nonblocking(false)
+        .unwrap_or_else(|e| log::warn!("failed to set listener blocking mode: {}", e));
+
+    loop {
+        if broker.is_shutdown() {
+            log::info!("socket server shutting down");
+            break;
+        }
+
+        listener
+            .set_nonblocking(true)
+            .unwrap_or_else(|e| log::warn!("failed to set non-blocking: {}", e));
+
+        match listener.accept() {
+            Ok((stream, _)) => {
+                let _ = stream.set_read_timeout(Some(CONNECTION_READ_TIMEOUT));
+
+                if let Err(e) = handle_connection(stream, event_tx, broker) {
+                    log::warn!("connection error: {}", e);
+                }
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(ACCEPT_TIMEOUT);
+            }
+            Err(e) => {
+                if broker.is_shutdown() {
+                    break;
+                }
+                log::warn!("failed to accept connection: {}", e);
+            }
+        }
+    }
+}
+
 fn handle_connection(
-    stream: std::os::unix::net::UnixStream,
+    stream: BrokerStream,
     event_tx: &Sender<EventData>,
     broker: &Broker,
 ) -> Result<(), String> {

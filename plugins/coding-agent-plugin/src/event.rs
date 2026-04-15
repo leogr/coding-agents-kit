@@ -161,6 +161,7 @@ impl ParsedEvent {
         let tool_input_command = extract_command(&tool_name, &tool_input);
         let mcp_server = extract_mcp_server(&tool_name);
 
+
         Some(ParsedFields {
             agent_name: agent_name.to_string(),
             correlation_id,
@@ -264,18 +265,42 @@ fn extract_raw_file_path(tool_name: &str, tool_input: &serde_json::Value) -> Str
 }
 
 /// Normalize a path lexically: resolve `.` and `..` without touching the filesystem.
+/// Never pops past the root (/ on Unix, C:\ on Windows) — mirrors filesystem behavior.
 fn normalize_path(path: &Path) -> PathBuf {
     let mut result = PathBuf::new();
     for component in path.components() {
         match component {
             Component::ParentDir => {
-                result.pop();
+                // file_name() returns None for root paths and empty paths,
+                // preventing `..` from erasing the drive letter or root.
+                if result.file_name().is_some() {
+                    result.pop();
+                }
             }
             Component::CurDir => {}
             other => result.push(other),
         }
     }
     result
+}
+
+/// Normalize path separators to forward slashes for cross-platform rule portability.
+/// On Windows, `canonicalize` and `PathBuf::to_string_lossy` produce backslashes,
+/// but Falco rules should use forward slashes consistently.
+fn normalize_separators(path: String) -> String {
+    #[cfg(windows)]
+    {
+        // Strip \\?\ prefix that Windows canonicalize may add.
+        let stripped = path
+            .strip_prefix(r"\\?\")
+            .unwrap_or(&path)
+            .to_string();
+        stripped.replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    {
+        path
+    }
 }
 
 /// Resolve a single path: canonicalize if possible, otherwise lexically normalize.
@@ -285,10 +310,10 @@ fn resolve_path(raw: &str) -> String {
     }
     // Try filesystem canonicalization first (resolves symlinks).
     if let Ok(resolved) = std::fs::canonicalize(raw) {
-        return resolved.to_string_lossy().into_owned();
+        return normalize_separators(resolved.to_string_lossy().into_owned());
     }
     // Fallback: lexical normalization only.
-    normalize_path(Path::new(raw)).to_string_lossy().into_owned()
+    normalize_separators(normalize_path(Path::new(raw)).to_string_lossy().into_owned())
 }
 
 /// Resolve a file path: if relative, join with cwd first, then resolve.
@@ -306,10 +331,10 @@ fn resolve_file_path(file_path: &str, resolved_cwd: &str) -> String {
     };
     // Try filesystem canonicalization first.
     if let Ok(resolved) = std::fs::canonicalize(&abs) {
-        return resolved.to_string_lossy().into_owned();
+        return normalize_separators(resolved.to_string_lossy().into_owned());
     }
     // Fallback: lexical normalization.
-    normalize_path(&abs).to_string_lossy().into_owned()
+    normalize_separators(normalize_path(&abs).to_string_lossy().into_owned())
 }
 
 fn extract_mcp_server(tool_name: &str) -> String {
@@ -320,5 +345,78 @@ fn extract_mcp_server(tool_name: &str) -> String {
     match rest.find("__") {
         Some(pos) if pos > 0 => rest[..pos].to_string(),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_path_relative() {
+        assert_eq!(normalize_path(Path::new("foo/bar/../baz")), PathBuf::from("foo/baz"));
+    }
+
+    #[test]
+    fn normalize_path_empty() {
+        assert_eq!(normalize_path(Path::new("")), PathBuf::from(""));
+    }
+
+    #[test]
+    fn normalize_path_unix_root_not_erased() {
+        // /foo/../.. must stop at /, not produce an empty path.
+        assert_eq!(normalize_path(Path::new("/foo/../..")), PathBuf::from("/"));
+    }
+
+    #[test]
+    fn normalize_path_unix_root_stays() {
+        assert_eq!(normalize_path(Path::new("/..")), PathBuf::from("/"));
+    }
+
+    #[test]
+    fn normalize_path_dot_only() {
+        assert_eq!(normalize_path(Path::new("./foo/./bar")), PathBuf::from("foo/bar"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_path_windows_drive_not_erased() {
+        // C:\foo\..\.. must stop at C:\, not produce bare "bar" or empty.
+        assert_eq!(
+            normalize_path(Path::new(r"C:\foo\..\..\bar")),
+            PathBuf::from(r"C:\bar")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_path_windows_drive_root_stays() {
+        assert_eq!(normalize_path(Path::new(r"C:\..")), PathBuf::from(r"C:\"));
+    }
+
+    #[test]
+    fn normalize_path_consecutive_dotdot_from_root() {
+        assert_eq!(normalize_path(Path::new("/../../..")), PathBuf::from("/"));
+    }
+
+    #[test]
+    fn normalize_path_relative_dotdot_past_start() {
+        // Relative ../ past start can't be resolved lexically — discarded.
+        assert_eq!(normalize_path(Path::new("../../foo")), PathBuf::from("foo"));
+    }
+
+    #[test]
+    fn normalize_path_single_dotdot() {
+        assert_eq!(normalize_path(Path::new("..")), PathBuf::from(""));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn normalize_path_windows_unc_root_not_erased() {
+        // UNC root must be preserved: \\server\share\..\.. stops at \\server\.
+        let result = normalize_path(Path::new(r"\\server\share\..\.."));
+        // After popping share and attempting to pop past UNC root,
+        // the root component is preserved.
+        assert!(result.to_string_lossy().starts_with(r"\\server"));
     }
 }
