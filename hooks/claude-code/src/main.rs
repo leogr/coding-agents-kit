@@ -25,8 +25,8 @@
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::{self, BufRead, Read, Write};
+#[cfg(unix)]
 use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
 use std::process;
 use std::time::{Duration, Instant};
 
@@ -84,6 +84,7 @@ struct HookSpecificOutput<'a> {
 const DEFAULT_TIMEOUT_MS: u64 = 5000;
 const TIMEOUT_MIN_MS: u64 = 100;
 const TIMEOUT_MAX_MS: u64 = 30000;
+#[cfg(unix)]
 const SOCKET_SUFFIX: &str = "/.coding-agents-kit/run/broker.sock";
 const INPUT_MAX: usize = 64 * 1024;
 const RESPONSE_MAX: u64 = 64 * 1024;
@@ -144,11 +145,24 @@ fn get_socket_path() -> String {
             return v;
         }
     }
-    let home = env::var("HOME").unwrap_or_default();
-    if home.is_empty() {
-        return String::new();
+    #[cfg(unix)]
+    {
+        let home = env::var("HOME").unwrap_or_default();
+        if home.is_empty() {
+            return String::new();
+        }
+        format!("{home}{SOCKET_SUFFIX}")
     }
-    format!("{home}{SOCKET_SUFFIX}")
+    #[cfg(windows)]
+    {
+        // MSI installs to %LOCALAPPDATA%\coding-agents-kit (not %USERPROFILE%)
+        let base = env::var("LOCALAPPDATA").unwrap_or_default();
+        if base.is_empty() {
+            return String::new();
+        }
+        // Use forward slashes — YAML configs and AF_UNIX paths must match exactly.
+        format!("{}/coding-agents-kit/run/broker.sock", base.replace('\\', "/"))
+    }
 }
 
 fn get_timeout() -> Duration {
@@ -176,8 +190,12 @@ fn remaining_timeout(start: Instant, timeout: Duration) -> Result<Duration, Stri
 fn communicate(socket_path: &str, request: &[u8], timeout: Duration) -> Result<Response, String> {
     let start = Instant::now();
 
-    let stream =
-        UnixStream::connect(socket_path).map_err(|e| format!("broker unavailable: {e}"))?;
+    #[cfg(unix)]
+    let stream = std::os::unix::net::UnixStream::connect(socket_path)
+        .map_err(|e| format!("broker unavailable: {e}"))?;
+    #[cfg(windows)]
+    let stream = uds_windows::UnixStream::connect(socket_path)
+        .map_err(|e| format!("broker unavailable: {e}"))?;
 
     // Send request.
     let remaining = remaining_timeout(start, timeout)?;
@@ -188,7 +206,11 @@ fn communicate(socket_path: &str, request: &[u8], timeout: Duration) -> Result<R
         .write_all(request)
         .map_err(|e| format!("broker write failed: {e}"))?;
 
-    // Signal we're done writing so the broker knows the full request arrived.
+    // Signal end-of-write so the broker's read_line can detect EOF alongside
+    // the \n delimiter. Skipped on Windows: shutdown(SD_SEND) on AF_UNIX
+    // resets the connection on some Windows builds, preventing the broker
+    // from writing the verdict back to the interceptor.
+    #[cfg(unix)]
     stream
         .shutdown(Shutdown::Write)
         .map_err(|e| format!("broker shutdown failed: {e}"))?;
@@ -272,9 +294,11 @@ fn run() -> Result<(), Error> {
     // Step 4: Configuration.
     let socket_path = get_socket_path();
     if socket_path.is_empty() {
-        return Err(Error::BrokerError(
-            "HOME not set, cannot locate broker socket".into(),
-        ));
+        #[cfg(unix)]
+        let msg = "HOME not set, cannot locate broker socket";
+        #[cfg(windows)]
+        let msg = "LOCALAPPDATA not set, cannot locate broker socket";
+        return Err(Error::BrokerError(msg.into()));
     }
     let timeout = get_timeout();
 

@@ -1,0 +1,141 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+  xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="coding-agents-kit"
+           Manufacturer="Falco Authors"
+           Version="$(var.ProductVersion)"
+           ProductCode="$(var.ProductCode)"
+           UpgradeCode="B2C3D4E5-F6A7-8901-BCDE-F12345678901"
+           Scope="perUser">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of coding-agents-kit is already installed."
+            AllowSameVersionUpgrades="yes" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="Complete" Title="coding-agents-kit" Level="1">
+      <ComponentGroupRef Id="BinFiles" />
+      <ComponentGroupRef Id="ShareFiles" />
+      <ComponentGroupRef Id="RulesDefaultFiles" />
+      <ComponentGroupRef Id="RulesSeenFile" />
+      <ComponentGroupRef Id="RulesUserDir" />
+      <ComponentGroupRef Id="ScriptFiles" />
+      <ComponentGroupRef Id="RuntimeDirs" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_InstallDir" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+
+    <!-- Run post-install setup at the end of MSI install so double-clicking
+         the MSI is sufficient for a working installation. -->
+    <CustomAction Id="SetRunPostInstallCmdLine"
+                  Property="RunPostInstall"
+                  Value='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "[#PostInstallScriptFile]"' />
+
+    <CustomAction Id="RunPostInstall"
+                  BinaryRef="$(var.UtilCABinaryRef)"
+                  DllEntry="WixQuietExec64"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetRunPostInstallCmdLine" After="InstallFiles" Condition="NOT Installed AND NOT REMOVE" />
+      <Custom Action="RunPostInstall" After="SetRunPostInstallCmdLine" Condition="NOT Installed AND NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+
+  <!-- Directory layout under %LOCALAPPDATA%\coding-agents-kit\ -->
+  <Fragment>
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLDIR" Name="coding-agents-kit">
+        <Directory Id="BINDIR" Name="bin" />
+        <Directory Id="SHAREDIR" Name="share" />
+        <Directory Id="CONFIGDIR" Name="config" />
+        <Directory Id="RULESDIR" Name="rules">
+          <Directory Id="RULESDEFAULTDIR" Name="default" />
+          <Directory Id="RULESUSERDIR" Name="user" />
+        </Directory>
+        <Directory Id="SCRIPTSDIR" Name="scripts" />
+        <Directory Id="RUNDIR" Name="run" />
+        <Directory Id="LOGDIR" Name="log" />
+      </Directory>
+    </StandardDirectory>
+  </Fragment>
+
+  <!-- Binaries -->
+  <Fragment>
+    <ComponentGroup Id="BinFiles" Directory="BINDIR">
+      <Component>
+        <File Source="$(var.StageDir)\bin\falco.exe" />
+      </Component>
+      <Component>
+        <File Source="$(var.StageDir)\bin\claude-interceptor.exe" />
+      </Component>
+      <Component>
+        <File Source="$(var.StageDir)\bin\coding-agents-kit-ctl.exe" />
+      </Component>
+      <Component>
+        <File Source="$(var.StageDir)\bin\coding-agents-kit-launcher.ps1" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Plugin shared library -->
+  <Fragment>
+    <ComponentGroup Id="ShareFiles" Directory="SHAREDIR">
+      <Component>
+        <File Source="$(var.StageDir)\share\coding_agent.dll" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Default rules -->
+  <Fragment>
+    <ComponentGroup Id="RulesDefaultFiles" Directory="RULESDEFAULTDIR">
+      <Component>
+        <File Source="$(var.StageDir)\rules\default\coding_agents_rules.yaml" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Seen rule (loaded last) -->
+  <Fragment>
+    <ComponentGroup Id="RulesSeenFile" Directory="RULESDIR">
+      <Component>
+        <File Source="$(var.StageDir)\rules\seen.yaml" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- User rules directory (preserved on upgrade) -->
+  <Fragment>
+    <ComponentGroup Id="RulesUserDir" Directory="RULESUSERDIR">
+      <Component Id="RulesUserDirComp" Guid="D1E2F3A4-B5C6-7890-ABCD-EF1234567890">
+        <CreateFolder />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Install scripts -->
+  <Fragment>
+    <ComponentGroup Id="ScriptFiles" Directory="SCRIPTSDIR">
+      <Component>
+        <File Id="PostInstallScriptFile" Source="$(var.StageDir)\scripts\postinstall.ps1" />
+      </Component>
+      <Component>
+        <File Id="UninstallScriptFile" Source="$(var.StageDir)\scripts\uninstall.ps1" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- Runtime directories (run/, log/) -->
+  <Fragment>
+    <ComponentGroup Id="RuntimeDirs">
+      <Component Id="RunDirComp" Guid="E2F3A4B5-C6D7-8901-BCDE-F12345678902" Directory="RUNDIR">
+        <CreateFolder />
+      </Component>
+      <Component Id="LogDirComp" Guid="F3A4B5C6-D7E8-9012-CDEF-012345678903" Directory="LOGDIR">
+        <CreateFolder />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

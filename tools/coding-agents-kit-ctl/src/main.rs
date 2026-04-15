@@ -6,9 +6,29 @@ use std::process::{self, Command};
 #[cfg(target_os = "linux")]
 const SERVICE_NAME: &str = "coding-agents-kit";
 
+fn home_dir() -> String {
+    #[cfg(unix)]
+    {
+        env::var("HOME").unwrap_or_else(|_| "/tmp".to_string())
+    }
+    #[cfg(windows)]
+    {
+        env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string())
+        })
+    }
+}
+
 fn default_prefix() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".coding-agents-kit")
+    #[cfg(unix)]
+    {
+        PathBuf::from(home_dir()).join(".coding-agents-kit")
+    }
+    #[cfg(windows)]
+    {
+        // MSI installs to %LOCALAPPDATA%\coding-agents-kit (no leading dot)
+        PathBuf::from(home_dir()).join("coding-agents-kit")
+    }
 }
 
 fn plugin_config_path(prefix: &PathBuf) -> PathBuf {
@@ -16,19 +36,35 @@ fn plugin_config_path(prefix: &PathBuf) -> PathBuf {
 }
 
 fn claude_settings_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".claude/settings.json")
+    #[cfg(unix)]
+    {
+        PathBuf::from(home_dir()).join(".claude/settings.json")
+    }
+    #[cfg(windows)]
+    {
+        let home = env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string());
+        PathBuf::from(home).join(".claude/settings.json")
+    }
 }
 
 fn interceptor_command(prefix: &PathBuf) -> String {
-    let home = env::var("HOME").unwrap_or_default();
     let prefix_str = prefix.to_string_lossy();
-    let default = format!("{home}/.coding-agents-kit");
-    if prefix_str == default {
-        // Use $HOME for portability in settings.json.
-        "$HOME/.coding-agents-kit/bin/claude-interceptor".to_string()
-    } else {
-        format!("{}/bin/claude-interceptor", prefix_str)
+    #[cfg(unix)]
+    {
+        let home = env::var("HOME").unwrap_or_default();
+        let default = format!("{home}/.coding-agents-kit");
+        if prefix_str == default {
+            // Use $HOME for portability in settings.json.
+            "$HOME/.coding-agents-kit/bin/claude-interceptor".to_string()
+        } else {
+            format!("{}/bin/claude-interceptor", prefix_str)
+        }
+    }
+    #[cfg(windows)]
+    {
+        // Use forward slashes — Claude Code runs hooks via /usr/bin/bash
+        // (Git Bash) which strips backslashes as escape characters.
+        format!("{}/bin/claude-interceptor.exe", prefix_str.replace('\\', "/"))
     }
 }
 
@@ -456,6 +492,133 @@ fn service_status() {
 }
 
 // ---------------------------------------------------------------------------
+// Windows service management
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "windows")]
+const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(target_os = "windows")]
+const RUN_VALUE_NAME: &str = "CodingAgentsKit";
+
+#[cfg(target_os = "windows")]
+fn is_falco_running() -> bool {
+    Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq falco.exe", "/NH"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("falco.exe"))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "windows")]
+fn service_start() {
+    if is_falco_running() {
+        println!("Service already running.");
+        return;
+    }
+    let prefix = default_prefix();
+    let launcher = prefix.join("bin").join("coding-agents-kit-launcher.ps1");
+    if !launcher.exists() {
+        eprintln!("Launcher not found: {}", launcher.display());
+        eprintln!("Is coding-agents-kit installed?");
+        process::exit(1);
+    }
+    let ok = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            &launcher.to_string_lossy(),
+        ])
+        .spawn()
+        .is_ok();
+    if !ok {
+        eprintln!("Failed to start service.");
+        process::exit(1);
+    }
+    // Poll briefly to verify Falco actually started.
+    let mut started = false;
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if is_falco_running() {
+            started = true;
+            break;
+        }
+    }
+    if started {
+        println!("Service started.");
+    } else {
+        println!("Service starting (Falco not yet detected \u{2014} check logs).");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn service_stop() {
+    if !is_falco_running() {
+        println!("Service not running.");
+        return;
+    }
+    let ok = Command::new("taskkill")
+        .args(["/F", "/IM", "falco.exe"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        println!("Service stopped.");
+        warn_hook_still_registered();
+    } else {
+        eprintln!("Failed to stop service.");
+        process::exit(1);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn service_enable() {
+    let prefix = default_prefix();
+    let launcher = prefix.join("bin").join("coding-agents-kit-launcher.ps1");
+    let cmd = format!(
+        "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{}\"",
+        launcher.display()
+    );
+    let ok = Command::new("reg")
+        .args(["add", RUN_KEY, "/v", RUN_VALUE_NAME, "/t", "REG_SZ", "/d", &cmd, "/f"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        println!("Service enabled (auto-start on login).");
+    } else {
+        eprintln!("Failed to enable service.");
+        process::exit(1);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn service_disable() {
+    let ok = Command::new("reg")
+        .args(["delete", RUN_KEY, "/v", RUN_VALUE_NAME, "/f"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if ok {
+        println!("Service disabled.");
+    } else {
+        eprintln!("Failed to disable service (may not have been enabled).");
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn service_status() {
+    if is_falco_running() {
+        println!("Service running.");
+    } else {
+        println!("Service not running.");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Uninstall
 // ---------------------------------------------------------------------------
 
@@ -496,6 +659,22 @@ fn uninstall(prefix: &PathBuf, keep_user_rules: bool) {
             println!("Removing launchd plist...");
             let _ = fs::remove_file(&plist);
         }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Stop Falco if running.
+        if is_falco_running() {
+            println!("Stopping service...");
+            let _ = Command::new("taskkill")
+                .args(["/F", "/IM", "falco.exe"])
+                .status();
+        }
+        // Remove auto-start registry key.
+        let _ = Command::new("reg")
+            .args(["delete", RUN_KEY, "/v", RUN_VALUE_NAME, "/f"])
+            .status();
+        // Remove hook.
+        hook_remove();
     }
 
     // 2. Remove the hook (safety net).
@@ -546,8 +725,24 @@ fn uninstall(prefix: &PathBuf, keep_user_rules: bool) {
 // ---------------------------------------------------------------------------
 
 fn health(prefix: &PathBuf) {
+    #[cfg(unix)]
     let interceptor = prefix.join("bin/claude-interceptor");
-    let socket = prefix.join("run/broker.sock");
+    #[cfg(windows)]
+    let interceptor = prefix.join("bin/claude-interceptor.exe");
+
+    // Socket path must use forward slashes on Windows — AF_UNIX treats the path
+    // as an opaque address, so it must match exactly what the plugin binds to.
+    let socket = {
+        let raw = prefix.join("run/broker.sock");
+        #[cfg(windows)]
+        {
+            std::path::PathBuf::from(raw.to_string_lossy().replace('\\', "/"))
+        }
+        #[cfg(unix)]
+        {
+            raw
+        }
+    };
 
     // Check interceptor binary exists.
     if !interceptor.exists() {
@@ -585,24 +780,55 @@ fn health(prefix: &PathBuf) {
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            if stdout.contains("\"permissionDecision\"") {
-                // Parse to show a cleaner message.
-                if stdout.contains("\"allow\"") {
-                    println!("OK: pipeline healthy (synthetic event → allow)");
-                } else if stdout.contains("\"deny\"") {
-                    println!("OK: pipeline healthy (synthetic event → deny)");
-                    println!("  Note: a deny rule matched the health-check event.");
-                    println!("  This is expected if you have rules matching Bash commands.");
-                } else if stdout.contains("\"ask\"") {
-                    println!("OK: pipeline healthy (synthetic event → ask)");
-                } else {
-                    println!("OK: pipeline responded (unexpected verdict)");
-                    println!("  Response: {}", stdout.trim());
+            let parsed: serde_json::Value = match serde_json::from_str(stdout.trim()) {
+                Ok(v) => v,
+                Err(_) => {
+                    eprintln!("FAIL: interceptor returned malformed JSON");
+                    eprintln!("  Output: {}", stdout.trim());
+                    process::exit(1);
                 }
-            } else {
+            };
+
+            let decision = parsed
+                .pointer("/hookSpecificOutput/permissionDecision")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let reason = parsed
+                .pointer("/hookSpecificOutput/permissionDecisionReason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            if decision.is_empty() {
                 eprintln!("FAIL: interceptor returned unexpected output");
                 eprintln!("  Output: {}", stdout.trim());
                 process::exit(1);
+            }
+
+            // Denies caused by infrastructure failure (not real security rules)
+            // indicate a broken pipeline. Detect both forms of broker failure:
+            // - "broker response timeout": socket connected but no verdict arrived
+            // - "broker unavailable": connection refused (service not running)
+            if decision == "deny"
+                && (reason.contains("broker response timeout")
+                    || reason.contains("broker unavailable"))
+            {
+                eprintln!("FAIL: broker unreachable or timed out while waiting for verdict");
+                eprintln!("  Reason: {}", reason);
+                process::exit(1);
+            }
+
+            // Parse to show a cleaner message.
+            if decision == "allow" {
+                println!("OK: pipeline healthy (synthetic event → allow)");
+            } else if decision == "deny" {
+                println!("OK: pipeline healthy (synthetic event → deny)");
+                println!("  Note: a deny rule matched the health-check event.");
+                println!("  This is expected if you have rules matching Bash commands.");
+            } else if decision == "ask" {
+                println!("OK: pipeline healthy (synthetic event → ask)");
+            } else {
+                println!("OK: pipeline responded (unexpected verdict)");
+                println!("  Response: {}", stdout.trim());
             }
         }
         Ok(out) => {
@@ -632,8 +858,17 @@ fn logs(prefix: &PathBuf, stderr: bool) {
         eprintln!("Is the service running?");
         process::exit(1);
     }
+    #[cfg(unix)]
     let status = Command::new("tail")
         .args(["-f", &path.to_string_lossy()])
+        .status();
+    #[cfg(windows)]
+    let status = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("Get-Content -Path '{}' -Wait -Tail 50", path.display()),
+        ])
         .status();
     if let Err(e) = status {
         eprintln!("Failed to tail log: {e}");
