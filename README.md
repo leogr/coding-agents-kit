@@ -252,10 +252,10 @@ See [`installers/macos/`](installers/macos/) for details.
 Requires: Rust (latest stable), Visual Studio 2022+ with C++ workload, CMake 3.24+, vcpkg with curl, .NET Runtime 8+, WiX Toolset v4.
 
 ```powershell
-powershell -File installers\windows\package.ps1 -Version 0.1.0
+powershell -File installers\windows\package.ps1 -Version 0.1.2
 ```
 
-Output: `build/out/coding-agents-kit-0.1.0-windows-x64.msi`
+Output: `build/out/coding-agents-kit-0.1.2-windows-x64.msi`
 
 > Falco is built from source on the first run (~10 min). Subsequent builds use the cached binary.
 
