@@ -69,7 +69,7 @@ $pluginYaml = @"
 # coding-agents-kit plugin configuration (Windows, auto-generated)
 plugins:
   - name: coding_agent
-    library_path: ../share/coding_agent.dll
+    library_path: $($ShareDir -replace '\\', '/')/coding_agent.dll
     init_config:
       mode: enforcement
       socket_path: "$($Prefix -replace '\\', '/')/run/broker.sock"

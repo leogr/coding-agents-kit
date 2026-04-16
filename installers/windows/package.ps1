@@ -137,34 +137,9 @@ if ([string]::IsNullOrWhiteSpace($FalcoExe)) {
 
 if (-not (Test-Path $FalcoExe)) { throw "Falco binary not found: $FalcoExe" }
 
-# ---------------------------------------------------------------------------
-# Patch falco.exe plugin search path
-# ---------------------------------------------------------------------------
-
-Write-Host "Patching falco.exe plugin search path..."
-$falcoBytes = [System.IO.File]::ReadAllBytes($FalcoExe)
-$searchBytes = [System.Text.Encoding]::ASCII.GetBytes('/usr/share/falco/plugins/')
-$replaceBytes = New-Object byte[] $searchBytes.Length
-$replaceBytes[0] = [byte][char]'.'
-$replaceBytes[1] = [byte][char]'/'
-
-$patched = $false
-for ($i = 0; $i -le $falcoBytes.Length - $searchBytes.Length; $i++) {
-    $match = $true
-    for ($j = 0; $j -lt $searchBytes.Length; $j++) {
-        if ($falcoBytes[$i + $j] -ne $searchBytes[$j]) { $match = $false; break }
-    }
-    if ($match) {
-        for ($j = 0; $j -lt $replaceBytes.Length; $j++) { $falcoBytes[$i + $j] = $replaceBytes[$j] }
-        $patched = $true
-        Write-Host "  Patched at offset $i"
-        break
-    }
-}
-
-$stagedFalco = Join-Path $StageDir 'bin\falco.exe'
-[System.IO.File]::WriteAllBytes($stagedFalco, $falcoBytes)
-if (-not $patched) { Write-Host "  WARNING: plugin path pattern not found (may already be patched)" }
+# Stage falco.exe (no binary patching needed — the Falco patch enables
+# absolute library_path on Windows via std::filesystem::path::has_root_path).
+Copy-Item $FalcoExe (Join-Path $StageDir 'bin\falco.exe') -Force
 
 # ---------------------------------------------------------------------------
 # Stage binaries

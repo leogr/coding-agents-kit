@@ -1,8 +1,30 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index b678374..3a72138 100644
+index b678374..bec393f 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -197,6 +197,12 @@ if(NOT WIN32
+@@ -143,10 +143,17 @@ if(NOT DEFINED FALCO_COMPONENT_NAME)
+ endif()
+ 
+ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+-	set(CMAKE_INSTALL_PREFIX
+-		/usr
+-		CACHE PATH "Default install path" FORCE
+-	)
++	if(WIN32)
++		set(CMAKE_INSTALL_PREFIX
++			"C:/Program Files/${CMAKE_PROJECT_NAME}"
++			CACHE PATH "Default install path" FORCE
++		)
++	else()
++		set(CMAKE_INSTALL_PREFIX
++			/usr
++			CACHE PATH "Default install path" FORCE
++		)
++	endif()
+ endif()
+ 
+ set(CMD_MAKE make)
+@@ -197,6 +204,12 @@ if(NOT WIN32
  	include(cpp-httplib)
  endif()
  
@@ -35,6 +57,56 @@ index 5ae5b83..8428f83 100644
  if(EMSCRIPTEN)
  	target_compile_options(falco_application PRIVATE "-sDISABLE_EXCEPTION_CATCHING=0")
  endif()
+diff --git a/userspace/falco/configuration.h b/userspace/falco/configuration.h
+index 10238cc..6085255 100644
+--- a/userspace/falco/configuration.h
++++ b/userspace/falco/configuration.h
+@@ -31,6 +31,7 @@ limitations under the License.
+ #include <set>
+ #include <iostream>
+ #include <fstream>
++#include <filesystem>
+ 
+ #include "config_falco.h"
+ #include "yaml_helper.h"
+@@ -420,9 +421,34 @@ struct convert<falco_configuration::plugin_config> {
+ 			return false;
+ 		}
+ 		rhs.m_library_path = node["library_path"].as<std::string>();
+-		if(!rhs.m_library_path.empty() && rhs.m_library_path.at(0) != '/') {
+-			// prepend share dir if path is not absolute
+-			rhs.m_library_path = std::string(FALCO_ENGINE_PLUGINS_DIR) + rhs.m_library_path;
++		if(!rhs.m_library_path.empty() &&
++		   !std::filesystem::path(rhs.m_library_path).has_root_path()) {
++			// Relative path: resolve against the plugins directory
++			// and verify the result stays within it.
++			auto full_path = std::filesystem::path(FALCO_ENGINE_PLUGINS_DIR) / rhs.m_library_path;
++			// lexically_normal resolves . and .. purely lexically,
++			// without filesystem access (unlike weakly_canonical which
++			// leaves .. unresolved for non-existent path components).
++			auto normalized = full_path.lexically_normal();
++			auto plugins_dir = std::filesystem::path(FALCO_ENGINE_PLUGINS_DIR).lexically_normal();
++			auto rel = normalized.lexically_relative(plugins_dir);
++			if(rel.empty()) {
++				throw YAML::Exception(node["library_path"].Mark(),
++				                      "plugin library_path '" +
++				                              node["library_path"].as<std::string>() +
++				                              "' resolves outside the plugins directory (" +
++				                              std::string(FALCO_ENGINE_PLUGINS_DIR) + ")");
++			}
++			for(const auto& component : rel) {
++				if(component == "..") {
++					throw YAML::Exception(node["library_path"].Mark(),
++					                      "plugin library_path '" +
++					                              node["library_path"].as<std::string>() +
++					                              "' resolves outside the plugins directory (" +
++					                              std::string(FALCO_ENGINE_PLUGINS_DIR) + ")");
++				}
++			}
++			rhs.m_library_path = normalized.string();
+ 		}
+ 
+ 		if(node["init_config"] && !node["init_config"].IsNull()) {
 diff --git a/userspace/falco/falco_outputs.cpp b/userspace/falco/falco_outputs.cpp
 index 0023756..f77ff91 100644
 --- a/userspace/falco/falco_outputs.cpp
