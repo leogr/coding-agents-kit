@@ -39,7 +39,7 @@ The project targets **Claude Code** on **Linux, macOS, and Windows**. The archit
 | **Rules** | `rules/` | YAML (Falco rule language) | Vendor and local security policies. |
 | **Installer** | `installers/linux/`, `installers/macos/`, `installers/windows/` | Shell/PowerShell | Platform-specific packaging, installation, hook registration, mode switching. |
 | **Skills** | `skills/` | Claude Code skill format | Coding agent skills for rule authoring, status, etc. |
-| **Tests** | `tests/` | TBD | Integration and E2E tests. |
+| **Tests** | `tests/` | Rust | Cross-platform interceptor and E2E integration tests. |
 
 ## Key Design Decisions
 
@@ -301,14 +301,14 @@ Requires latest stable Rust (the falco_plugin SDK tracks latest stable as MSRV).
 ### Tests
 
 ```bash
-make test                   # Run all tests (Linux/macOS)
+make test                   # Run all tests (cross-platform)
 make test-interceptor       # Interceptor unit tests (mock broker, no Falco needed)
-make test-e2e               # E2E tests (requires Falco in PATH, plugin, and interceptor built)
-make test-interceptor-windows  # Interceptor unit tests on Windows
-make test-e2e-windows          # E2E tests on Windows
+make test-e2e               # E2E tests (requires Falco built, plugin, and interceptor)
 ```
 
-On Linux, use `make download-falco-linux` to download pre-built Falco binaries and `make falco-linux-bin-dir` to get the binary path. On macOS, use `make falco-macos` to build from source. On Windows, use `make falco-windows` to build from source (requires vcpkg + MSVC).
+Tests are written in Rust (`tests/` crate) and work on all platforms with the same targets. E2E tests automatically find the Falco binary from the project's build output (not the system). They skip gracefully if Falco is not built.
+
+On Linux, use `make download-falco-linux` to download pre-built Falco binaries. On macOS, use `make falco-macos` to build from source. On Windows, use `make falco-windows` to build from source (requires vcpkg + MSVC).
 
 ### Packaging
 
