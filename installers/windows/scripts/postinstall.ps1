@@ -110,6 +110,22 @@ if (Test-Path $ctlExe) {
 }
 
 # ---------------------------------------------------------------------------
+# Add bin/ to user PATH (persistent, avoids full-path invocations)
+# ---------------------------------------------------------------------------
+
+try {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($userPath -notlike "*$BinDir*") {
+        [Environment]::SetEnvironmentVariable('Path', "$userPath;$BinDir", 'User')
+        Write-Host "Added $BinDir to user PATH"
+    } else {
+        Write-Host "bin/ already in user PATH"
+    }
+} catch {
+    Write-Warning "Failed to update PATH: $($_.Exception.Message)"
+}
+
+# ---------------------------------------------------------------------------
 # Register auto-start via Registry Run key
 # ---------------------------------------------------------------------------
 
@@ -125,7 +141,7 @@ if (Test-Path $launcherScript) {
     Write-Host "Registered auto-start"
   } catch {
     Write-Warning "Auto-start registration failed: $($_.Exception.Message)"
-    }
+  }
 }
 
-  Write-Host "Post-install complete: coding-agents-kit is installed and configured."
+Write-Host "Post-install complete: coding-agents-kit is installed and configured."

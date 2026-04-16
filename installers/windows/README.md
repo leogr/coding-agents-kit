@@ -46,6 +46,7 @@ Falco's upstream build excludes `http_output` on Windows (CMake and preprocessor
 
 - **NOPROXY**: Adds `CURLOPT_NOPROXY="*"` to bypass system/environment proxy settings for localhost alert delivery. Tolerates `CURLE_NOT_BUILT_IN` because the SChannel curl backend may omit proxy support.
 - **CA path**: Wraps the CA certificate path/bundle options in a Windows-specific block that tolerates `CURLE_NOT_BUILT_IN`. SChannel uses the Windows Certificate Store automatically and does not support `CURLOPT_CAPATH` / `CURLOPT_CAINFO`.
+- **Plugin path resolution**: Replaces the POSIX-only `path[0] != '/'` check with `std::filesystem::path::has_root_path()` so that Windows absolute paths (`C:/...`) are recognized correctly and not prepended with the default plugins directory.
 
 ## Prerequisites
 
@@ -82,8 +83,10 @@ Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
 # Restart your shell, then:
 rustc --version    # requires 1.80+
 cargo --version
+```
 
-# Add x64 target (needed if building on ARM64 Windows)
+On ARM64 Windows, rustup installs the native `stable-aarch64-pc-windows-msvc` toolchain. Add the x64 target only if you need cross-compilation:
+```powershell
 rustup target add x86_64-pc-windows-msvc
 ```
 
@@ -94,9 +97,14 @@ vcpkg provides the system curl library used by Falco's `http_output`.
 ```powershell
 git clone https://github.com/microsoft/vcpkg
 .\vcpkg\bootstrap-vcpkg.bat
-.\vcpkg\vcpkg install curl:x64-windows-static
-# Set VCPKG_ROOT so the build script finds it:
+
+# Install curl for your architecture:
+.\vcpkg\vcpkg install curl:x64-windows-static      # x64 hosts
+.\vcpkg\vcpkg install curl:arm64-windows-static     # ARM64 hosts
+
+# REQUIRED: set VCPKG_ROOT so the build scripts find it:
 $env:VCPKG_ROOT = (Resolve-Path .\vcpkg).Path
+# To persist across sessions, add to your PowerShell profile or system env vars.
 ```
 
 Note: on recent vcpkg baselines, the `schannel` feature name is not required for this use case. The packaging/build scripts only require `libcurl.lib` to be present under the selected triplet.
@@ -117,31 +125,33 @@ WiX v7 requires explicit OSMF EULA acceptance. Without this, packaging fails wit
 ### Quick Build (all components + MSI)
 
 ```powershell
-# From the repository root:
-powershell -File installers\windows\package.ps1 -Version 0.1.2
+# From the repository root (VCPKG_ROOT must be set):
+$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
+powershell -ExecutionPolicy Bypass -File installers\windows\package.ps1 -Version 0.1.2
 ```
 
 This single command:
-1. Compiles all Rust crates for x64 (interceptor, plugin DLL, ctl)
-2. Clones and builds Falco 0.43.0 from source with `http_output` patch (~10 min, cached)
-3. Patches `falco.exe` plugin search path
-4. Stages all files and produces the MSI installer
+1. Compiles all Rust crates for the native architecture (interceptor, plugin DLL, ctl)
+2. Clones and builds Falco 0.43.0 from source with patches (~10 min first time, cached after)
+3. Stages all files and produces the MSI installer
 
-Output: `build/out/coding-agents-kit-0.1.2-windows-x64.msi`
+Output: `build/out/coding-agents-kit-<version>-windows-<arch>.msi`
 
 ### Step-by-Step Build
 
 ```powershell
-# 1. Build Rust crates (targets x64)
-cd hooks\claude-code && cargo build --release --target x86_64-pc-windows-msvc && cd ..\..
-cd plugins\coding-agent-plugin && cargo build --release --target x86_64-pc-windows-msvc && cd ..\..
-cd tools\coding-agents-kit-ctl && cargo build --release --target x86_64-pc-windows-msvc && cd ..\..
+$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
+
+# 1. Build Rust crates (auto-detects native target)
+cd hooks\claude-code && cargo build --release && cd ..\..
+cd plugins\coding-agent-plugin && cargo build --release && cd ..\..
+cd tools\coding-agents-kit-ctl && cargo build --release && cd ..\..
 
 # 2. Build Falco from source (~10 minutes first time, cached after)
-powershell -File installers\windows\build-falco.ps1 -Arch x64
+powershell -ExecutionPolicy Bypass -File installers\windows\build-falco.ps1
 
 # 3. Package MSI (uses pre-built components)
-powershell -File installers\windows\package.ps1 -Version 0.1.2 -SkipRustBuild -SkipFalcoBuild
+powershell -ExecutionPolicy Bypass -File installers\windows\package.ps1 -SkipRustBuild -SkipFalcoBuild
 ```
 
 ### Build Options
@@ -149,53 +159,71 @@ powershell -File installers\windows\package.ps1 -Version 0.1.2 -SkipRustBuild -S
 | Flag | Description |
 |------|-------------|
 | `-Version 0.1.2` | Package version (semantic versioning) |
-| `-Arch x64` | Target architecture (default: x64) |
+| `-Arch x64` or `-Arch arm64` | Target architecture (default: auto-detected from hardware) |
 | `-SkipRustBuild` | Skip Rust compilation (use pre-built binaries) |
 | `-SkipFalcoBuild` | Skip Falco build (use cached build) |
 | `-FalcoExe <path>` | Use a specific pre-built `falco.exe` |
 
 ## Installing
 
-```powershell
-# Install (deploys files + runs postinstall setup deterministically)
-powershell -File build\out\Install-CodingAgentsKit.ps1
+### MSI install + post-install setup
 
-# Or run MSI directly (shows a standard wizard with acceptance notice)
-msiexec /i build\out\coding-agents-kit-0.1.2-windows-x64.msi
+```powershell
+# 1. Install the MSI (shows wizard, or use /quiet for silent)
+msiexec /i build\out\coding-agents-kit-0.1.2-windows-arm64.msi
+
+# 2. Run post-install setup (generates config, registers hook, adds bin/ to PATH)
+powershell -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\coding-agents-kit\scripts\postinstall.ps1"
+
+# 3. Open a NEW terminal (so the updated PATH takes effect), then:
+coding-agents-kit-ctl start
+Start-Sleep 5
+coding-agents-kit-ctl health
 ```
 
-The installer:
+Expected output: `OK: pipeline healthy (synthetic event → allow)`
+
+### Helper script (alternative)
+
+The `Install-CodingAgentsKit.ps1` helper script runs the MSI silently and then runs post-install setup:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File build\out\Install-CodingAgentsKit.ps1
+```
+
+If the product is already installed, it opens the MSI maintenance UI instead of forcing a silent reinstall.
+
+### What the installer does
+
 - Deploys binaries, plugin DLL, rules, and scripts to `%LOCALAPPDATA%\coding-agents-kit\`
-- Generates Falco configuration with resolved Windows paths
-- Registers the Claude Code interceptor hook
+- Post-install generates Falco configuration with resolved Windows paths
+- Registers the Claude Code interceptor hook in `~/.claude/settings.json`
+- Adds `bin/` to the user PATH (persistent, so `coding-agents-kit-ctl` works without full path)
 - Sets up auto-start via Registry Run key
-
-The MSI wizard now includes an acceptance notice that explains the hook, auto-start, and fail-closed behavior before installation continues.
-
-If the product is already installed, `Install-CodingAgentsKit.ps1` opens the MSI maintenance UI instead of forcing a silent reinstall.
-
-For unattended/silent automation, prefer `Install-CodingAgentsKit.ps1` so post-install tasks are always executed in user context and the script prints a final completion line.
-
-If you run the helper script, it prints a final completion line: `coding-agents-kit installation complete`.
 
 ### Uninstalling
 
 **Always use the uninstall helper script** — it runs the cleanup script, removes the Claude Code hook, removes the auto-start registry key, and then removes the MSI-managed files:
 
 ```powershell
-powershell -File Uninstall-CodingAgentsKit.ps1
+powershell -ExecutionPolicy Bypass -File Uninstall-CodingAgentsKit.ps1
 ```
 
 > **Warning**: Do NOT uninstall via Apps & Features or `msiexec /x` directly. The MSI alone cannot run cleanup scripts (Windows limitation for per-user installs), so the Claude Code hook and auto-start registry key would be left behind, leaving Claude Code in a fail-closed state.
 
 ## Running Tests
 
-```powershell
-# Interceptor tests (17 test cases, no Falco needed)
-powershell -File tests\test_interceptor_windows.ps1
+Tests are written in Rust and located in the `tests/` directory:
 
-# End-to-end tests (requires built Falco + plugin)
-powershell -File tests\test_e2e_windows.ps1
+```powershell
+# Run all tests (requires Falco + plugin built)
+cargo test --manifest-path tests/Cargo.toml
+
+# Interceptor unit tests only (mock broker, no Falco needed)
+cargo test --manifest-path tests/Cargo.toml --test interceptor
+
+# End-to-end tests (requires Falco in PATH or FALCO_BIN set)
+cargo test --manifest-path tests/Cargo.toml --test e2e
 ```
 
 ## Directory Layout (installed)
@@ -203,12 +231,12 @@ powershell -File tests\test_e2e_windows.ps1
 ```
 %LOCALAPPDATA%\coding-agents-kit\
 ├── bin\
-│   ├── falco.exe                          # Falco rule engine (x64)
+│   ├── falco.exe                          # Falco rule engine
 │   ├── claude-interceptor.exe             # Claude Code hook
 │   ├── coding-agents-kit-ctl.exe          # Service management CLI
 │   └── coding-agents-kit-launcher.ps1     # Service launcher
 ├── share\
-│   └── coding_agent.dll            # Falco plugin (source + extract)
+│   └── coding_agent.dll                   # Falco plugin (source + extract)
 ├── config\
 │   ├── falco.yaml                         # Base Falco config
 │   └── falco.coding_agents_plugin.yaml    # Plugin + rules config
@@ -225,9 +253,17 @@ powershell -File tests\test_e2e_windows.ps1
 
 ## Known Caveats
 
-- **`broker response timeout` / stale pending requests**: if Claude Code tool calls are denied with a broker timeout and Falco logs show `reaping stale pending request`, the alert round-trip is not completing. The most common cause is a misconfigured `http_output.url` in `falco.yaml` (must match the plugin's `http_port`) or an older Falco build without the SChannel curl fix in `falco-windows-curl-noproxy.patch`. Run `coding-agents-kit-ctl health` to confirm the pipeline is healthy after starting the service.
+- **`VCPKG_ROOT` must be set**: The Falco build script requires `VCPKG_ROOT` pointing to your vcpkg installation. The build fails immediately without it. Set it in your environment or pass it before each build command.
 
-- **ARM64 hosts and Rust/MSVC arch alignment**: on ARM64 Windows, use matching ARM64 toolchain for Rust host (`stable-aarch64-pc-windows-msvc`) and MSVC (`vcvarsall arm64`) when building ARM64 artifacts. Mixed host/target toolchains can fail with unresolved externals at link time.
+- **`-ExecutionPolicy Bypass`**: Windows default execution policy blocks PowerShell scripts. Always use `powershell -ExecutionPolicy Bypass -File <script>` when running the build, packaging, or install scripts.
+
+- **External tools write to stderr**: `cargo`, `cmd.exe`, and `vswhere.exe` write non-fatal output to stderr. Since the build scripts use `$ErrorActionPreference = 'Stop'`, unguarded external calls fail. The scripts use `2>&1 | ForEach-Object { "$_" }` to merge stderr safely. If you add new external tool calls, follow the same pattern.
+
+- **`broker response timeout` / stale pending requests**: If Claude Code tool calls are denied with a broker timeout and Falco logs show `reaping stale pending request`, the alert round-trip is not completing. The most common cause is a misconfigured `http_output.url` in `falco.yaml` (must match the plugin's `http_port`). Run `coding-agents-kit-ctl health` to confirm the pipeline is healthy after starting the service.
+
+- **`basename()` in rules on Windows**: Falco's `basename()` transformer uses POSIX logic (splits on `/`). Use `basename(tool.real_file_path)` (forward slashes, normalized by the plugin) not `basename(tool.file_path)` (raw, may contain backslashes on Windows).
+
+- **ARM64 hosts and Rust/MSVC arch alignment**: On ARM64 Windows, use matching ARM64 toolchain for Rust host (`stable-aarch64-pc-windows-msvc`) and MSVC (`vcvarsall arm64`) when building ARM64 artifacts. Mixed host/target toolchains can fail with unresolved externals at link time.
 
 - **Falco nested CMake generator on ARM64 hosts**: Falco's `falcosecurity-libs` nested configure may choose a Visual Studio generator/platform different from the top-level build if generator/platform are not forwarded explicitly. Keep nested and top-level generator settings aligned to avoid `VCTargetsPath` / platform mismatch errors.
 

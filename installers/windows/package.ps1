@@ -112,7 +112,10 @@ if (-not $SkipRustBuild) {
     foreach ($crate in $crates) {
         Write-Host "  Building $($crate.Name)..."
         Push-Location (Join-Path $RootDir $crate.Path)
+        $prevPref = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
         & cargo build --release --target $RustTarget
+        $ErrorActionPreference = $prevPref
         if ($LASTEXITCODE -ne 0) { throw "$($crate.Name) build failed." }
         Pop-Location
     }
