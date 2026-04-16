@@ -53,7 +53,8 @@ jobs:
             hooks/claude-code/target
             plugins/coding-agent-plugin/target
             tools/coding-agents-kit-ctl/target
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            tests/target
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('hooks/claude-code/Cargo.lock', 'plugins/coding-agent-plugin/Cargo.lock', 'tools/coding-agents-kit-ctl/Cargo.lock', 'tests/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
@@ -108,7 +109,8 @@ jobs:
             hooks/claude-code/target
             plugins/coding-agent-plugin/target
             tools/coding-agents-kit-ctl/target
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            tests/target
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('hooks/claude-code/Cargo.lock', 'plugins/coding-agent-plugin/Cargo.lock', 'tools/coding-agents-kit-ctl/Cargo.lock', 'tests/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.arch }}-cargo-
 
@@ -127,10 +129,10 @@ jobs:
         run: make falco-windows-${{ matrix.arch }}
 
       - name: Run interceptor tests
-        run: make test-interceptor-windows
+        run: make test-interceptor
 
       - name: Run e2e tests
-        run: make test-e2e-windows
+        run: make test-e2e
 
   build-test-macos:
     name: Build & Test (macOS ${{ matrix.arch }})
@@ -161,7 +163,8 @@ jobs:
             hooks/claude-code/target
             plugins/coding-agent-plugin/target
             tools/coding-agents-kit-ctl/target
-          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            tests/target
+          key: ${{ runner.os }}-${{ matrix.arch }}-cargo-${{ hashFiles('hooks/claude-code/Cargo.lock', 'plugins/coding-agent-plugin/Cargo.lock', 'tools/coding-agents-kit-ctl/Cargo.lock', 'tests/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.arch }}-cargo-
 

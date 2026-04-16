@@ -7,7 +7,6 @@ ARCH := $(shell uname -m)
 	falco-macos falco-macos-bin-dir \
 	falco-windows falco-windows-x64 falco-windows-arm64 \
 	test test-interceptor test-e2e \
-	test-interceptor-windows test-e2e-windows \
 	linux linux-x86_64 linux-aarch64 \
 	macos macos-aarch64 macos-x86_64 macos-universal \
 	windows windows-x64 windows-arm64 \
@@ -47,13 +46,13 @@ falco-linux-bin-dir:
 ## Run all tests
 test: test-interceptor test-e2e
 
-## Run interceptor unit tests
-test-interceptor:
-	bash tests/test_interceptor.sh
+## Run interceptor unit tests (Rust, cross-platform)
+test-interceptor: build-interceptor
+	cd tests && cargo test --test interceptor -- --nocapture
 
-## Run end-to-end tests (requires Falco in PATH)
-test-e2e:
-	bash tests/test_e2e.sh
+## Run end-to-end tests (Rust, cross-platform, requires Falco built)
+test-e2e: build
+	cd tests && cargo test --test e2e --test e2e_monitor -- --nocapture
 
 ## Build Linux packages for all architectures
 linux: linux-x86_64 linux-aarch64
@@ -111,20 +110,13 @@ falco-windows-x64:
 falco-windows-arm64:
 	powershell -NoProfile -ExecutionPolicy Bypass -File installers/windows/build-falco.ps1 -Arch arm64
 
-## Run interceptor unit tests on Windows
-test-interceptor-windows:
-	powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_interceptor_windows.ps1
-
-## Run end-to-end tests on Windows
-test-e2e-windows:
-	powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_e2e_windows.ps1
-
 ## Remove build artifacts
 clean:
 	rm -rf build/
 	-cd hooks/claude-code && cargo clean
 	-cd plugins/coding-agent-plugin && cargo clean
 	-cd tools/coding-agents-kit-ctl && cargo clean
+	-cd tests && cargo clean
 
 ## Show available targets
 help:
@@ -140,8 +132,7 @@ help:
 	@echo "  test               Run all tests"
 	@echo "  test-interceptor   Run interceptor unit tests"
 	@echo "  test-e2e           Run end-to-end tests (requires Falco in PATH)"
-	@echo "  test-interceptor-windows  Run interceptor tests on Windows"
-	@echo "  test-e2e-windows          Run e2e tests on Windows"
+	@echo "  (tests are cross-platform — same targets work on all platforms)"
 	@echo ""
 	@echo "Falco:"
 	@echo "  download-falco-linux  Download pre-built Falco binary (Linux only)"
