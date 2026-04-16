@@ -245,7 +245,12 @@ exit /b 0
 Set-Content -Path $cmdPath -Value $script -Encoding ASCII
 
 try {
+    # Temporarily allow non-terminating errors so that harmless CMake
+    # deprecation warnings on stderr do not trigger ErrorActionPreference Stop.
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     & cmd.exe /d /c $cmdPath
+    $ErrorActionPreference = $prevPref
     if ($LASTEXITCODE -ne 0) { throw 'Falco Windows build failed.' }
 } finally {
     Remove-Item $cmdPath -Force -ErrorAction SilentlyContinue

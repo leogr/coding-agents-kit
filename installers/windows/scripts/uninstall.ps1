@@ -32,4 +32,13 @@ if (Test-Path $ctlExe) {
 $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 Remove-ItemProperty -Path $regPath -Name 'CodingAgentsKit' -ErrorAction SilentlyContinue
 
+# Remove bin/ from user PATH
+$BinDir = Join-Path $Prefix 'bin'
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($userPath -and $userPath -like "*$BinDir*") {
+    $newPath = ($userPath -split ';' | Where-Object { $_ -ne $BinDir }) -join ';'
+    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+    Write-Host "Removed $BinDir from user PATH"
+}
+
 Write-Host "Uninstall cleanup complete"
